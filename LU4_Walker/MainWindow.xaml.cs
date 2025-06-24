@@ -18,7 +18,6 @@ namespace LU4_Walker
 {
     public partial class MainWindow : Window
     {
-        // Импорт функций WinAPI
         [DllImport("user32.dll", SetLastError = true)]
         private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
@@ -49,43 +48,39 @@ namespace LU4_Walker
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
-        // Константы для сообщений Windows
-        private const uint WM_KEYDOWN = 0x0100;
-        private const int VK_NUM_DIV = 0x6F; // Код клавиши NumPad Divide
-        private const int HOTKEY_ID_SCREENSHOT = 0x9000; // ID для Ctrl + F12
-        private const int HOTKEY_ID_START = 0x9001; // ID для Page Up
-        private const int HOTKEY_ID_STOP = 0x9002; // ID для Page Down
-        private const int HOTKEY_ID_CHECK_PIXEL = 0x9003; // ID для End
-        private const uint MOD_CONTROL = 0x0002; // Модификатор Ctrl
-        private const uint VK_F12 = 0x7B; // Код клавиши F12
-        private const uint VK_PAGE_UP = 0x21; // Код клавиши Page Up
-        private const uint VK_PAGE_DOWN = 0x22; // Код клавиши Page Down
-        private const uint VK_END = 0x23; // Код клавиши End
-        private const int WM_HOTKEY = 0x0312; // Сообщение для горячей клавиши
-        private const int SW_RESTORE = 9; // Флаг для восстановления окна
+        [DllImport("user32.dll")]
+        private static extern bool SetCursorPos(int X, int Y);
 
-        // Структура для хранения координат окна
+        private const uint WM_KEYDOWN = 0x0100;
+        private const int VK_NUM_DIV = 0x6F;
+        private const int HOTKEY_ID_SCREENSHOT = 0x9000;
+        private const int HOTKEY_ID_START = 0x9001;
+        private const int HOTKEY_ID_STOP = 0x9002;
+        private const int HOTKEY_ID_CHECK_PIXEL = 0x9003;
+        private const uint MOD_CONTROL = 0x0002;
+        private const uint VK_F12 = 0x7B;
+        private const uint VK_PAGE_UP = 0x21;
+        private const uint VK_PAGE_DOWN = 0x22;
+        private const uint VK_END = 0x23;
+        private const int WM_HOTKEY = 0x0312;
+        private const int SW_RESTORE = 9;
+
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT
         {
-            public int Left;
-            public int Top;
-            public int Right;
-            public int Bottom;
+            public int Left, Top, Right, Bottom;
         }
 
-        // Структура для преобразования координат
         [StructLayout(LayoutKind.Sequential)]
         private struct POINT
         {
-            public int X;
-            public int Y;
+            public int X, Y;
         }
 
+        private IntPtr BSFGhWnd = IntPtr.Zero;
         private DispatcherTimer findMonster;
         private Dictionary<string, IntPtr> lu4Windows;
         private HwndSource hwndSource;
-        private IntPtr selectedHwnd = IntPtr.Zero; // Хранит дескриптор текущего окна
 
         public MainWindow()
         {
@@ -94,7 +89,7 @@ namespace LU4_Walker
             LoadLU4Processes();
             Loaded += MainWindow_Loaded;
             Closing += MainWindow_Closing;
-            Topmost = true; // Окно поверх всех при запуске
+            Topmost = true;
         }
 
         private void InitializeTimer()
@@ -106,28 +101,23 @@ namespace LU4_Walker
 
         private void MainWindow_Loaded(object sender, RoutedEventArgs e)
         {
-            // Регистрация горячих клавиш
             try
             {
                 hwndSource = PresentationSource.FromVisual(this) as HwndSource;
                 if (hwndSource != null)
                 {
                     hwndSource.AddHook(WndProc);
-                    RegisterHotKey(hwndSource.Handle, HOTKEY_ID_SCREENSHOT, MOD_CONTROL, VK_F12); // Ctrl + F12
-                    RegisterHotKey(hwndSource.Handle, HOTKEY_ID_START, 0, VK_PAGE_UP); // Page Up
-                    RegisterHotKey(hwndSource.Handle, HOTKEY_ID_STOP, 0, VK_PAGE_DOWN); // Page Down
-                    RegisterHotKey(hwndSource.Handle, HOTKEY_ID_CHECK_PIXEL, 0, VK_END); // End
+                    RegisterHotKey(hwndSource.Handle, HOTKEY_ID_SCREENSHOT, MOD_CONTROL, VK_F12);
+                    RegisterHotKey(hwndSource.Handle, HOTKEY_ID_START, 0, VK_PAGE_UP);
+                    RegisterHotKey(hwndSource.Handle, HOTKEY_ID_STOP, 0, VK_PAGE_DOWN);
+                    RegisterHotKey(hwndSource.Handle, HOTKEY_ID_CHECK_PIXEL, 0, VK_END);
                 }
             }
-            catch
-            {
-                // Игнорируем ошибки регистрации
-            }
+            catch { }
         }
 
         private void MainWindow_Closing(object sender, System.ComponentModel.CancelEventArgs e)
         {
-            // Снятие регистрации горячих клавиш
             try
             {
                 if (hwndSource != null)
@@ -140,10 +130,7 @@ namespace LU4_Walker
                     hwndSource = null;
                 }
             }
-            catch
-            {
-                // Игнорируем ошибки
-            }
+            catch { }
         }
 
         private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -151,7 +138,6 @@ namespace LU4_Walker
             if (msg == WM_HOTKEY)
             {
                 int hotkeyId = wParam.ToInt32();
-                // Активация окна выбранного процесса
                 if (ProcessComboBox.SelectedItem != null)
                 {
                     string selectedWindow = ProcessComboBox.SelectedItem.ToString();
@@ -186,15 +172,14 @@ namespace LU4_Walker
         private void LoadLU4Processes()
         {
             lu4Windows = new Dictionary<string, IntPtr>();
-            ProcessComboBox.Items.Clear(); // Очистка текущего списка
+            ProcessComboBox.Items.Clear();
 
-            Process[] processes = Process.GetProcesses();
-            foreach (Process proc in processes)
+            foreach (Process proc in Process.GetProcesses())
             {
                 if (proc.MainWindowTitle.Contains("LU4") && proc.MainWindowHandle != IntPtr.Zero && proc.MainWindowTitle != "LU4 Walker")
                 {
                     string displayName = $"{proc.MainWindowTitle} (PID: {proc.Id})";
-                    lu4Windows.Add(displayName, proc.MainWindowHandle);
+                    lu4Windows[displayName] = proc.MainWindowHandle;
                     ProcessComboBox.Items.Add(displayName);
                 }
             }
@@ -217,13 +202,9 @@ namespace LU4_Walker
 
         private void findMonster_Tick(object sender, EventArgs e)
         {
-            if (selectedHwnd != IntPtr.Zero)
+            if (BSFGhWnd != IntPtr.Zero)
             {
-                int r = PixelColorChecker.CheckPixelColor("R", selectedHwnd, 300, 76);
-                if (r == 144)
-                {
-                    PostMessage(selectedHwnd, WM_KEYDOWN, VK_NUM_DIV, 0);
-                }
+                PostMessage(BSFGhWnd, WM_KEYDOWN, VK_NUM_DIV, 0);
             }
         }
 
@@ -232,26 +213,23 @@ namespace LU4_Walker
             if (ProcessComboBox.SelectedItem != null)
             {
                 string selectedWindow = ProcessComboBox.SelectedItem.ToString();
-                selectedHwnd = lu4Windows[selectedWindow];
-                ProcessComboBox.IsEnabled = false; // Блокировка ComboBox
+                BSFGhWnd = lu4Windows[selectedWindow];
                 findMonster.Start();
                 StartButton.Visibility = Visibility.Collapsed;
                 StopButton.Visibility = Visibility.Visible;
-                Topmost = false; // Окно на задний план
-                WindowState = WindowState.Minimized; // Сворачивание окна
+                Topmost = false;
+                WindowState = WindowState.Minimized;
             }
         }
 
         private void StopButton_Click(object sender, RoutedEventArgs e)
         {
             findMonster.Stop();
-            selectedHwnd = IntPtr.Zero; // Очистка дескриптора
-            ProcessComboBox.IsEnabled = true; // Разблокировка ComboBox
             StartButton.Visibility = Visibility.Visible;
             StopButton.Visibility = Visibility.Collapsed;
-            Topmost = true; // Окно поверх всех
-            WindowState = WindowState.Normal; // Восстановление окна
-            PixelColorTextBox.Text = ""; // Очистка поля цвета
+            Topmost = true;
+            WindowState = WindowState.Normal;
+            PixelColorTextBox.Text = "";
         }
 
         private void ProcessComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -259,24 +237,21 @@ namespace LU4_Walker
             if (findMonster.IsEnabled)
             {
                 findMonster.Stop();
-                selectedHwnd = IntPtr.Zero; // Очистка дескриптора
-                ProcessComboBox.IsEnabled = true; // Разблокировка ComboBox
                 StartButton.Visibility = Visibility.Visible;
                 StopButton.Visibility = Visibility.Collapsed;
-                Topmost = true; // Окно поверх всех
-                WindowState = WindowState.Normal; // Восстановление окна
-                PixelColorTextBox.Text = ""; // Очистка поля цвета
+                Topmost = true;
+                WindowState = WindowState.Normal;
+                PixelColorTextBox.Text = "";
             }
         }
 
         private void ProcessComboBox_DropDownOpened(object sender, EventArgs e)
         {
-            LoadLU4Processes(); // Обновление списка процессов при открытии ComboBox
+            LoadLU4Processes();
         }
 
         private void ScreenshotButton_Click(object sender, RoutedEventArgs e)
         {
-            // Активация окна процесса при нажатии кнопки
             if (ProcessComboBox.SelectedItem != null)
             {
                 string selectedWindow = ProcessComboBox.SelectedItem.ToString();
@@ -297,59 +272,12 @@ namespace LU4_Walker
             string selectedWindow = ProcessComboBox.SelectedItem.ToString();
             IntPtr hWnd = lu4Windows[selectedWindow];
 
-            // Проверка введённых координат
-            if (!int.TryParse(XTextBox.Text, out int x) || !int.TryParse(YTextBox.Text, out int y))
-            {
-                PixelColorTextBox.Text = "";
-                return;
-            }
-
-            // Проверка всех компонент цвета (R, G, B)
-            int r = PixelColorChecker.CheckPixelColor("R", hWnd, x, y);
-            int g = PixelColorChecker.CheckPixelColor("G", hWnd, x, y);
-            int b = PixelColorChecker.CheckPixelColor("B", hWnd, x, y);
-
-            if (r == -1 || g == -1 || b == -1)
-            {
-                PixelColorTextBox.Text = "";
-                return;
-            }
-
-            PixelColorTextBox.Text = $"R: {r}, G: {g}, B: {b}";
-        }
-
-        private void TakeScreenshot()
-        {
-            if (ProcessComboBox.SelectedItem == null)
-            {
-                return;
-            }
-
-            string selectedWindow = ProcessComboBox.SelectedItem.ToString();
-            IntPtr hWnd = lu4Windows[selectedWindow];
-
-            // Проверка, минимизировано ли окно, и восстановление
-            if (IsIconic(hWnd))
-            {
-                ShowWindow(hWnd, SW_RESTORE);
-            }
-
-            // Активация окна для корректного рендеринга
+            if (IsIconic(hWnd)) ShowWindow(hWnd, SW_RESTORE);
             SetForegroundWindow(hWnd);
 
-            // Задержка для рендеринга окна
-            Thread.Sleep(50);
-
-            // Получение размеров клиентской области
             if (!GetClientRect(hWnd, out RECT clientRect))
             {
-                return;
-            }
-
-            // Преобразование координат клиентской области в экранные
-            POINT topLeft = new POINT { X = clientRect.Left, Y = clientRect.Top };
-            if (!ClientToScreen(hWnd, ref topLeft))
-            {
+                PixelColorTextBox.Text = "";
                 return;
             }
 
@@ -358,17 +286,84 @@ namespace LU4_Walker
 
             if (width <= 0 || height <= 0)
             {
+                PixelColorTextBox.Text = "";
                 return;
             }
 
-            // Захват скриншота клиентской области
+            POINT topLeft = new POINT { X = 0, Y = 0 };
+            if (!ClientToScreen(hWnd, ref topLeft))
+            {
+                PixelColorTextBox.Text = "";
+                return;
+            }
+
             try
             {
                 using (Bitmap bitmap = new Bitmap(width, height))
                 {
                     using (Graphics graphics = Graphics.FromImage(bitmap))
                     {
-                        // Учёт DPI-шкалирования
+                        graphics.CopyFromScreen(topLeft.X, topLeft.Y, 0, 0, new System.Drawing.Size(width, height));
+                    }
+
+                    int searchHeight = Math.Min(100, height);
+                    bool found = false;
+
+                    for (int yy = 0; yy < searchHeight; yy++)
+                    {
+                        for (int xx = 0; xx < width; xx++)
+                        {
+                            Color pixel = bitmap.GetPixel(xx, yy);
+                            if (pixel.R > 200 && pixel.G < 80 && pixel.B < 80)
+                            {
+                                SetCursorPos(topLeft.X + xx, topLeft.Y + yy);
+                                PixelColorTextBox.Text = $"HP моба найден: R={pixel.R}, G={pixel.G}, B={pixel.B} @ ({xx},{yy})";
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (found) break;
+                    }
+
+                    if (!found)
+                    {
+                        PixelColorTextBox.Text = "Моб не выделен (полоска HP не найдена)";
+                    }
+                }
+            }
+            catch
+            {
+                PixelColorTextBox.Text = "Ошибка при поиске HP.";
+            }
+        }
+
+        private void TakeScreenshot()
+        {
+            if (ProcessComboBox.SelectedItem == null) return;
+
+            string selectedWindow = ProcessComboBox.SelectedItem.ToString();
+            IntPtr hWnd = lu4Windows[selectedWindow];
+
+            if (IsIconic(hWnd)) ShowWindow(hWnd, SW_RESTORE);
+            SetForegroundWindow(hWnd);
+            Thread.Sleep(50);
+
+            if (!GetClientRect(hWnd, out RECT clientRect)) return;
+
+            POINT topLeft = new POINT { X = clientRect.Left, Y = clientRect.Top };
+            if (!ClientToScreen(hWnd, ref topLeft)) return;
+
+            int width = clientRect.Right - clientRect.Left;
+            int height = clientRect.Bottom - clientRect.Top;
+
+            if (width <= 0 || height <= 0) return;
+
+            try
+            {
+                using (Bitmap bitmap = new Bitmap(width, height))
+                {
+                    using (Graphics graphics = Graphics.FromImage(bitmap))
+                    {
                         float dpiScaleX = graphics.DpiX / 96.0f;
                         float dpiScaleY = graphics.DpiY / 96.0f;
                         int scaledX = (int)(topLeft.X / dpiScaleX);
@@ -379,12 +374,10 @@ namespace LU4_Walker
                         graphics.CopyFromScreen(scaledX, scaledY, 0, 0, new System.Drawing.Size(scaledWidth, scaledHeight));
                     }
 
-                    // Получение пути к папке с .exe
                     string exePath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
                     string datePrefix = DateTime.Now.ToString("dd.MM.yyyy");
                     int nextNumber = 1;
 
-                    // Поиск следующего доступного номера
                     string[] existingFiles = Directory.GetFiles(exePath, $"{datePrefix} - *.bmp");
                     if (existingFiles.Length > 0)
                     {
@@ -395,18 +388,12 @@ namespace LU4_Walker
                             .Max() + 1;
                     }
 
-                    // Формирование имени файла
                     string fileName = $"{datePrefix} - {nextNumber:D3}.bmp";
                     string filePath = Path.Combine(exePath, fileName);
-
-                    // Сохранение скриншота
                     bitmap.Save(filePath, ImageFormat.Bmp);
                 }
             }
-            catch
-            {
-                // Игнорируем ошибки
-            }
+            catch { }
         }
     }
 }
