@@ -1,399 +1,191 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Shapes;
 using System.Windows.Threading;
-using System.Collections.Generic;
-using System.Linq;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.IO;
-using System.Reflection;
-using System.Windows.Interop;
-using System.Threading;
 using System.Windows.Forms;
+//using System.Windows.Media;
 
 namespace LU4_Walker
 {
     public partial class MainWindow : Window
     {
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
+        [DllImport("user32.dll")] private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+        [DllImport("user32.dll")] private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
+        [DllImport("user32.dll")] private static extern bool IsIconic(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
+        [DllImport("user32.dll")] private static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+        [DllImport("user32.dll")] private static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
 
-        [DllImport("user32.dll")]
-        private static extern bool PostMessage(IntPtr hWnd, uint Msg, int wParam, int lParam);
-
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string lpszClass, string lpszWindow);
-
-        [DllImport("user32.dll")]
-        private static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
-
-        [DllImport("user32.dll")]
-        private static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
-
-        [DllImport("user32.dll")]
-        private static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
-
-        [DllImport("user32.dll")]
-        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
-
-        [DllImport("user32.dll")]
-        private static extern bool SetForegroundWindow(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        private static extern bool IsIconic(IntPtr hWnd);
-
-        [DllImport("user32.dll")]
-        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-
-        [DllImport("user32.dll")]
-        private static extern bool SetCursorPos(int X, int Y);
-
-        private const uint WM_KEYDOWN = 0x0100;
-        private const int VK_NUM_DIV = 0x6F;
-        private const int HOTKEY_ID_SCREENSHOT = 0x9000;
-        private const int HOTKEY_ID_START = 0x9001;
-        private const int HOTKEY_ID_STOP = 0x9002;
-        private const int HOTKEY_ID_CHECK_PIXEL = 0x9003;
-        private const uint MOD_CONTROL = 0x0002;
-        private const uint VK_F12 = 0x7B;
-        private const uint VK_PAGE_UP = 0x21;
-        private const uint VK_PAGE_DOWN = 0x22;
-        private const uint VK_END = 0x23;
-        private const int WM_HOTKEY = 0x0312;
         private const int SW_RESTORE = 9;
+        private const uint KEYEVENTF_KEYUP = 0x0002;
+        private const uint MOUSEEVENTF_LEFTDOWN = 0x02;
+        private const uint MOUSEEVENTF_LEFTUP = 0x04;
 
         [StructLayout(LayoutKind.Sequential)]
-        private struct RECT
-        {
-            public int Left, Top, Right, Bottom;
-        }
-
+        private struct RECT { public int Left, Top, Right, Bottom; }
         [StructLayout(LayoutKind.Sequential)]
-        private struct POINT
-        {
-            public int X, Y;
-        }
+        private struct POINT { public int X, Y; }
 
+        private Dictionary<string, IntPtr> lu4Windows = new();
+        private CancellationTokenSource huntToken;
+        private readonly Random rng = new();
         private IntPtr BSFGhWnd = IntPtr.Zero;
-        private DispatcherTimer findMonster;
-        private Dictionary<string, IntPtr> lu4Windows;
-        private HwndSource hwndSource;
+        private DateTime lastKeepAlive = DateTime.MinValue;
 
         public MainWindow()
         {
             InitializeComponent();
-            InitializeTimer();
             LoadLU4Processes();
-            Loaded += MainWindow_Loaded;
-            Closing += MainWindow_Closing;
-            Topmost = true;
-        }
-
-        private void InitializeTimer()
-        {
-            findMonster = new DispatcherTimer();
-            findMonster.Tick += new EventHandler(findMonster_Tick);
-            findMonster.Interval = new TimeSpan(0, 0, 0, 0, 200);
-        }
-
-        private void MainWindow_Loaded(object sender, RoutedEventArgs e)
-        {
-            try
-            {
-                hwndSource = PresentationSource.FromVisual(this) as HwndSource;
-                if (hwndSource != null)
-                {
-                    hwndSource.AddHook(WndProc);
-                    RegisterHotKey(hwndSource.Handle, HOTKEY_ID_SCREENSHOT, MOD_CONTROL, VK_F12);
-                    RegisterHotKey(hwndSource.Handle, HOTKEY_ID_START, 0, VK_PAGE_UP);
-                    RegisterHotKey(hwndSource.Handle, HOTKEY_ID_STOP, 0, VK_PAGE_DOWN);
-                    RegisterHotKey(hwndSource.Handle, HOTKEY_ID_CHECK_PIXEL, 0, VK_END);
-                }
-            }
-            catch { }
-        }
-
-        private void MainWindow_Closing(object sender, System.ComponentModel.CancelEventArgs e)
-        {
-            try
-            {
-                if (hwndSource != null)
-                {
-                    UnregisterHotKey(hwndSource.Handle, HOTKEY_ID_SCREENSHOT);
-                    UnregisterHotKey(hwndSource.Handle, HOTKEY_ID_START);
-                    UnregisterHotKey(hwndSource.Handle, HOTKEY_ID_STOP);
-                    UnregisterHotKey(hwndSource.Handle, HOTKEY_ID_CHECK_PIXEL);
-                    hwndSource.RemoveHook(WndProc);
-                    hwndSource = null;
-                }
-            }
-            catch { }
-        }
-
-        private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
-        {
-            if (msg == WM_HOTKEY)
-            {
-                int hotkeyId = wParam.ToInt32();
-                if (ProcessComboBox.SelectedItem != null)
-                {
-                    string selectedWindow = ProcessComboBox.SelectedItem.ToString();
-                    IntPtr hWnd = lu4Windows[selectedWindow];
-                    SetForegroundWindow(hWnd);
-                }
-
-                if (hotkeyId == HOTKEY_ID_SCREENSHOT)
-                {
-                    TakeScreenshot();
-                    handled = true;
-                }
-                else if (hotkeyId == HOTKEY_ID_START)
-                {
-                    StartButton_Click(null, null);
-                    handled = true;
-                }
-                else if (hotkeyId == HOTKEY_ID_STOP)
-                {
-                    StopButton_Click(null, null);
-                    handled = true;
-                }
-                else if (hotkeyId == HOTKEY_ID_CHECK_PIXEL)
-                {
-                    CheckPixelColorButton_Click(null, null);
-                    handled = true;
-                }
-            }
-            return IntPtr.Zero;
         }
 
         private void LoadLU4Processes()
         {
-            lu4Windows = new Dictionary<string, IntPtr>();
+            lu4Windows.Clear();
             ProcessComboBox.Items.Clear();
 
-            foreach (Process proc in Process.GetProcesses())
+            foreach (var proc in Process.GetProcesses())
             {
-                if (proc.MainWindowTitle.Contains("LU4") && proc.MainWindowHandle != IntPtr.Zero && proc.MainWindowTitle != "LU4 Walker")
+                if (proc.MainWindowTitle.Contains("LU4") && proc.MainWindowHandle != IntPtr.Zero)
                 {
-                    string displayName = $"{proc.MainWindowTitle} (PID: {proc.Id})";
-                    lu4Windows[displayName] = proc.MainWindowHandle;
-                    ProcessComboBox.Items.Add(displayName);
+                    string name = $"{proc.MainWindowTitle} (PID: {proc.Id})";
+                    lu4Windows[name] = proc.MainWindowHandle;
+                    ProcessComboBox.Items.Add(name);
                 }
             }
 
             if (lu4Windows.Count > 0)
-            {
                 ProcessComboBox.SelectedIndex = 0;
-                StartButton.IsEnabled = true;
-                ScreenshotButton.IsEnabled = true;
-                CheckPixelColorButton.IsEnabled = true;
-            }
-            else
+        }
+
+        private void SpamKey(byte vkCode, int count = 1, int minDelay = 20, int maxDelay = 60)
+        {
+            for (int i = 0; i < count; i++)
             {
-                StartButton.IsEnabled = false;
-                ScreenshotButton.IsEnabled = false;
-                CheckPixelColorButton.IsEnabled = false;
-                PixelColorTextBox.Text = "";
+                keybd_event(vkCode, 0, 0x0000, UIntPtr.Zero);
+                Thread.Sleep(rng.Next(minDelay, maxDelay));
+                keybd_event(vkCode, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+                Thread.Sleep(rng.Next(minDelay, maxDelay));
             }
         }
 
-        private void findMonster_Tick(object sender, EventArgs e)
+        private bool IsMonsterTargeted(IntPtr hWnd)
         {
-            if (BSFGhWnd != IntPtr.Zero)
+            if (!GetClientRect(hWnd, out RECT rect)) return false;
+            int width = rect.Right - rect.Left;
+            if (width <= 0) return false;
+
+            POINT topLeft = new() { X = 0, Y = 0 };
+            if (!ClientToScreen(hWnd, ref topLeft)) return false;
+
+            using Bitmap bmp = new(width, 5);
+            using Graphics g = Graphics.FromImage(bmp);
+            g.CopyFromScreen(topLeft.X, topLeft.Y, 0, 0, new System.Drawing.Size(width, 5));
+
+            for (int x = 0; x < width; x++)
             {
-                PostMessage(BSFGhWnd, WM_KEYDOWN, VK_NUM_DIV, 0);
+                Color pixel = bmp.GetPixel(x, 0);
+                if (pixel.R > 200 && pixel.G < 80 && pixel.B < 80)
+                    return true;
+            }
+            return false;
+        }
+
+        private async Task StartHuntingLoop()
+        {
+            if (ProcessComboBox.SelectedItem == null) return;
+            string selectedWindow = ProcessComboBox.SelectedItem.ToString();
+            IntPtr hWnd = lu4Windows[selectedWindow];
+            BSFGhWnd = hWnd;
+
+            if (IsIconic(hWnd)) ShowWindow(hWnd, SW_RESTORE);
+            SetForegroundWindow(hWnd);
+
+            huntToken = new CancellationTokenSource();
+            CancellationToken token = huntToken.Token;
+
+            while (!token.IsCancellationRequested)
+            {
+                // 1️⃣ Спам WASD по кругу для имитации активности
+                SpamKey(0x57); // W
+                await Task.Delay(50, token);
+                SpamKey(0x41); // A
+                await Task.Delay(50, token);
+                SpamKey(0x53); // S
+                await Task.Delay(50, token);
+                SpamKey(0x44); // D
+                await Task.Delay(50, token);
+
+                SetForegroundWindow(hWnd);
+
+                // 2️⃣ Захват цели
+                for (int i = 0; i < 3; i++)
+                {
+                    SpamKey(0x36); // key 6
+                    await Task.Delay(150, token);
+                }
+
+                await Task.Delay(400, token);
+
+                // 3️⃣ Проверка захвата
+                bool found = false;
+                for (int i = 0; i < 10; i++)
+                {
+                    if (IsMonsterTargeted(hWnd)) { found = true; break; }
+                    await Task.Delay(100, token);
+                }
+
+                if (!found) continue;
+
+                // 4️⃣ Убийство
+                while (IsMonsterTargeted(hWnd))
+                {
+                    SpamKey(0x31, 3); // key 1
+                    await Task.Delay(250, token);
+                }
+
+                // 5️⃣ Loot / Buff
+                for (int i = 0; i < 5; i++)
+                {
+                    SpamKey(0x37); // key 7
+                    await Task.Delay(300, token);
+                }
+
+                await Task.Delay(500, token);
             }
         }
 
         private void StartButton_Click(object sender, RoutedEventArgs e)
         {
-            if (ProcessComboBox.SelectedItem != null)
-            {
-                string selectedWindow = ProcessComboBox.SelectedItem.ToString();
-                BSFGhWnd = lu4Windows[selectedWindow];
-                findMonster.Start();
-                StartButton.Visibility = Visibility.Collapsed;
-                StopButton.Visibility = Visibility.Visible;
-                Topmost = false;
-                WindowState = WindowState.Minimized;
-            }
+            StartButton.IsEnabled = false;
+            StopButton.IsEnabled = true;
+            _ = StartHuntingLoop();
         }
 
         private void StopButton_Click(object sender, RoutedEventArgs e)
         {
-            findMonster.Stop();
-            StartButton.Visibility = Visibility.Visible;
-            StopButton.Visibility = Visibility.Collapsed;
-            Topmost = true;
-            WindowState = WindowState.Normal;
-            PixelColorTextBox.Text = "";
+            huntToken?.Cancel();
+            StartButton.IsEnabled = true;
+            StopButton.IsEnabled = false;
         }
 
         private void ProcessComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (findMonster.IsEnabled)
-            {
-                findMonster.Stop();
-                StartButton.Visibility = Visibility.Visible;
-                StopButton.Visibility = Visibility.Collapsed;
-                Topmost = true;
-                WindowState = WindowState.Normal;
-                PixelColorTextBox.Text = "";
-            }
+            if (huntToken != null && !huntToken.IsCancellationRequested)
+                StopButton_Click(null, null);
         }
 
-        private void ProcessComboBox_DropDownOpened(object sender, EventArgs e)
+        protected override void OnClosed(EventArgs e)
         {
-            LoadLU4Processes();
-        }
-
-        private void ScreenshotButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (ProcessComboBox.SelectedItem != null)
-            {
-                string selectedWindow = ProcessComboBox.SelectedItem.ToString();
-                IntPtr hWnd = lu4Windows[selectedWindow];
-                SetForegroundWindow(hWnd);
-            }
-            TakeScreenshot();
-        }
-
-        private void CheckPixelColorButton_Click(object sender, RoutedEventArgs e)
-        {
-            if (ProcessComboBox.SelectedItem == null)
-            {
-                PixelColorTextBox.Text = "";
-                return;
-            }
-
-            string selectedWindow = ProcessComboBox.SelectedItem.ToString();
-            IntPtr hWnd = lu4Windows[selectedWindow];
-
-            if (IsIconic(hWnd)) ShowWindow(hWnd, SW_RESTORE);
-            SetForegroundWindow(hWnd);
-
-            if (!GetClientRect(hWnd, out RECT clientRect))
-            {
-                PixelColorTextBox.Text = "";
-                return;
-            }
-
-            int width = clientRect.Right - clientRect.Left;
-            int height = clientRect.Bottom - clientRect.Top;
-
-            if (width <= 0 || height <= 0)
-            {
-                PixelColorTextBox.Text = "";
-                return;
-            }
-
-            POINT topLeft = new POINT { X = 0, Y = 0 };
-            if (!ClientToScreen(hWnd, ref topLeft))
-            {
-                PixelColorTextBox.Text = "";
-                return;
-            }
-
-            try
-            {
-                using (Bitmap bitmap = new Bitmap(width, height))
-                {
-                    using (Graphics graphics = Graphics.FromImage(bitmap))
-                    {
-                        graphics.CopyFromScreen(topLeft.X, topLeft.Y, 0, 0, new System.Drawing.Size(width, height));
-                    }
-
-                    int searchHeight = Math.Min(100, height);
-                    bool found = false;
-
-                    for (int yy = 0; yy < searchHeight; yy++)
-                    {
-                        for (int xx = 0; xx < width; xx++)
-                        {
-                            Color pixel = bitmap.GetPixel(xx, yy);
-                            if (pixel.R > 200 && pixel.G < 80 && pixel.B < 80)
-                            {
-                                SetCursorPos(topLeft.X + xx, topLeft.Y + yy);
-                                PixelColorTextBox.Text = $"HP моба найден: R={pixel.R}, G={pixel.G}, B={pixel.B} @ ({xx},{yy})";
-                                found = true;
-                                break;
-                            }
-                        }
-                        if (found) break;
-                    }
-
-                    if (!found)
-                    {
-                        PixelColorTextBox.Text = "Моб не выделен (полоска HP не найдена)";
-                    }
-                }
-            }
-            catch
-            {
-                PixelColorTextBox.Text = "Ошибка при поиске HP.";
-            }
-        }
-
-        private void TakeScreenshot()
-        {
-            if (ProcessComboBox.SelectedItem == null) return;
-
-            string selectedWindow = ProcessComboBox.SelectedItem.ToString();
-            IntPtr hWnd = lu4Windows[selectedWindow];
-
-            if (IsIconic(hWnd)) ShowWindow(hWnd, SW_RESTORE);
-            SetForegroundWindow(hWnd);
-            Thread.Sleep(50);
-
-            if (!GetClientRect(hWnd, out RECT clientRect)) return;
-
-            POINT topLeft = new POINT { X = clientRect.Left, Y = clientRect.Top };
-            if (!ClientToScreen(hWnd, ref topLeft)) return;
-
-            int width = clientRect.Right - clientRect.Left;
-            int height = clientRect.Bottom - clientRect.Top;
-
-            if (width <= 0 || height <= 0) return;
-
-            try
-            {
-                using (Bitmap bitmap = new Bitmap(width, height))
-                {
-                    using (Graphics graphics = Graphics.FromImage(bitmap))
-                    {
-                        float dpiScaleX = graphics.DpiX / 96.0f;
-                        float dpiScaleY = graphics.DpiY / 96.0f;
-                        int scaledX = (int)(topLeft.X / dpiScaleX);
-                        int scaledY = (int)(topLeft.Y / dpiScaleY);
-                        int scaledWidth = (int)(width / dpiScaleX);
-                        int scaledHeight = (int)(height / dpiScaleY);
-
-                        graphics.CopyFromScreen(scaledX, scaledY, 0, 0, new System.Drawing.Size(scaledWidth, scaledHeight));
-                    }
-
-                    string exePath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
-                    string datePrefix = DateTime.Now.ToString("dd.MM.yyyy");
-                    int nextNumber = 1;
-
-                    string[] existingFiles = Directory.GetFiles(exePath, $"{datePrefix} - *.bmp");
-                    if (existingFiles.Length > 0)
-                    {
-                        nextNumber = existingFiles
-                            .Select(f => Path.GetFileNameWithoutExtension(f).Split('-').Last().Trim())
-                            .Select(n => int.TryParse(n, out int num) ? num : 0)
-                            .DefaultIfEmpty(0)
-                            .Max() + 1;
-                    }
-
-                    string fileName = $"{datePrefix} - {nextNumber:D3}.bmp";
-                    string filePath = Path.Combine(exePath, fileName);
-                    bitmap.Save(filePath, ImageFormat.Bmp);
-                }
-            }
-            catch { }
+            huntToken?.Cancel();
+            base.OnClosed(e);
         }
     }
 }
