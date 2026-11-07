@@ -1,307 +1,598 @@
-﻿using System;
-using System.Diagnostics;
-using System.Drawing;
+﻿using System.Diagnostics;
 using System.IO;
-using System.IO.Ports;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using System.Windows.Threading;
-using Tesseract;
+using WTOPMBot.Models;
+using WTOPMBot.Services;
+using WTOPMBot.Services.Input;
 
-namespace LU4_Walker
+namespace WTOPMBot;
+
+public partial class MainWindow : Window
 {
-    public partial class MainWindow : Window
+    private static readonly Brush DangerBrush = (Brush)Application.Current.Resources["DangerBrush"];
+    private static readonly Brush MutedBrush = (Brush)Application.Current.Resources["MutedBrush"];
+    private static readonly Brush SuccessBrush = (Brush)Application.Current.Resources["SuccessBrush"];
+
+    private GlobalHotkeys? _hotkeys;
+    private AppSettings _settings = new();
+    private StatusBarProfile _barProfile = StatusBarProfileStore.CreateDefault();
+    private DispatcherTimer? _sampleTimer;
+    private AttackLoop? _attackLoop;
+    private IKeyInput? _keyInput;
+    private MonitorWindow? _monitor;
+    private nint _sampleHwnd;
+    private bool _isRunning;
+    private int? _selectedPid;
+    private bool _isCapturing;
+    private bool _suppressInputUiEvents;
+
+    public MainWindow()
     {
-        #region WinAPI
+        _suppressInputUiEvents = true;
+        InitializeComponent();
+        StopButton.IsEnabled = false;
+        Loaded += OnLoaded;
+        Closed += OnClosed;
+        RebuildKeyInput();
+        _suppressInputUiEvents = false;
+    }
 
-        [DllImport("user32.dll")] static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
-        [DllImport("user32.dll")] static extern bool ClientToScreen(IntPtr hWnd, ref POINT lpPoint);
-        [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
-        [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
-        [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
-        [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string lpModuleName);
-        [DllImport("user32.dll")] private static extern bool SetCursorPos(int X, int Y);
+    private string CapturesDirectory =>
+        Path.Combine(AppContext.BaseDirectory, "captures");
 
+    private void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        _settings = SettingsStore.Load();
+        _barProfile = StatusBarProfileStore.LoadOrCreateDefault();
+        EnsureBarProfileUpToDate();
 
-        [StructLayout(LayoutKind.Sequential)] struct POINT { public int X, Y; }
-        [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
+        _suppressInputUiEvents = true;
+        TopmostCheck.IsChecked = _settings.AlwaysOnTop;
+        Topmost = _settings.AlwaysOnTop;
+        AutoAttackCheck.IsChecked = _settings.AutoAttackEnabled;
+        _suppressInputUiEvents = false;
 
-        const int WH_KEYBOARD_LL = 13;
-        const int WM_KEYDOWN = 0x0100;
-        delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+        RebuildKeyInput();
+        AttachHotkeys();
+        RefreshProcesses(keepSelection: false);
+    }
 
-        #endregion
-
-        private readonly DispatcherTimer attackTimer = new();
-        private readonly DispatcherTimer searchTimer = new();
-        private readonly DispatcherTimer pickUpTimer = new();
-        private readonly DispatcherTimer findHelper = new();
-        private readonly DispatcherTimer playerDead = new();
-
-        private readonly LowLevelKeyboardProc hookProc;
-        private readonly SerialPort teensy;
-        private IntPtr hookId = IntPtr.Zero;
-        private IntPtr targetHwnd = IntPtr.Zero;
-
-        private int searchTime = 1;
-        private bool pickUp = false;
-  
-
-
-
-
-
-
-
-
-
-        public MainWindow()
+    private void OnClosed(object? sender, EventArgs e)
+    {
+        StopSampling();
+        PersistUiSettings();
+        _hotkeys?.Dispose();
+        _keyInput?.Dispose();
+        if (_monitor is not null)
         {
-            InitializeComponent();
+            _monitor.AllowClose = true;
+            _monitor.Close();
+            _monitor = null;
+        }
+    }
 
-            teensy = new SerialPort("COM3", 9600);
-            try { teensy.Open(); }
-            catch (Exception ex)
+    private void TitleBar_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton == MouseButton.Left)
+            DragMove();
+    }
+
+    private void MinimizeButton_OnClick(object sender, RoutedEventArgs e) =>
+        WindowState = WindowState.Minimized;
+
+    private void CloseButton_OnClick(object sender, RoutedEventArgs e) =>
+        Close();
+
+    private void AttachHotkeys()
+    {
+        _hotkeys?.Dispose();
+        _hotkeys = new GlobalHotkeys(this);
+        _hotkeys.StartPressed += () => Dispatcher.BeginInvoke(StartBot);
+        _hotkeys.StopPressed += () => Dispatcher.BeginInvoke(StopBot);
+        _hotkeys.ScreenshotPressed += () => Dispatcher.BeginInvoke(async () => await CaptureScreenshotAsync());
+        _hotkeys.Attach();
+
+        HotkeyHintText.Text = $"PgUp/PgDn · Ins=скрин · {_hotkeys.DescribeStatus()}";
+    }
+
+    private void TopmostCheck_OnChanged(object sender, RoutedEventArgs e)
+    {
+        Topmost = TopmostCheck.IsChecked == true;
+        _settings.AlwaysOnTop = Topmost;
+        SettingsStore.Save(_settings);
+    }
+
+    private void AutoAttackCheck_OnChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressInputUiEvents)
+            return;
+
+        _settings.AutoAttackEnabled = AutoAttackCheck.IsChecked == true;
+        if (_attackLoop is not null)
+            _attackLoop.Enabled = _settings.AutoAttackEnabled;
+        SettingsStore.Save(_settings);
+    }
+
+    private void RebuildKeyInput()
+    {
+        _keyInput?.Dispose();
+        _keyInput = new SendInputKeyInput();
+        _attackLoop = new AttackLoop(_keyInput)
+        {
+            Enabled = AutoAttackCheck?.IsChecked == true,
+            IntervalMs = 1000,
+            TargetHwnd = _sampleHwnd
+        };
+    }
+
+    private void MonitorButton_OnClick(object sender, RoutedEventArgs e) => OpenMonitor();
+
+    private void OpenMonitor()
+    {
+        if (_monitor is null)
+        {
+            _monitor = new MonitorWindow
             {
-                MessageBox.Show($"Не удалось открыть COM3:\n{ex.Message}", "COM-порт", MessageBoxButton.OK);
-            }
-
-            attackTimer.Interval = TimeSpan.FromMilliseconds(800);
-            searchTimer.Interval = TimeSpan.FromMilliseconds(900);
-            pickUpTimer.Interval = TimeSpan.FromMilliseconds(1000);       
-            playerDead.Interval = TimeSpan.FromMilliseconds(2000);
-            attackTimer.Tick += AttackTimer_Tick;
-            searchTimer.Tick += SearchTimer_Tick;
-            pickUpTimer.Tick += PickUpTimer_Tick;      
-            playerDead.Tick += PlayerDead_Tick;
-
-            hookProc = HookCallback;
-            Loaded += (_, __) =>
-            {
-                using var mod = Process.GetCurrentProcess().MainModule!;
-                hookId = SetWindowsHookEx(WH_KEYBOARD_LL, hookProc, GetModuleHandle(mod.ModuleName), 0);
+                Owner = this,
+                SampleX = _settings.SampleX,
+                SampleY = _settings.SampleY
             };
         }
 
-        protected override void OnClosed(EventArgs e)
+        if (!_monitor.IsVisible)
+            _monitor.Show();
+        _monitor.Activate();
+    }
+
+    private void RefreshButton_OnClick(object sender, RoutedEventArgs e) =>
+        RefreshProcesses(keepSelection: true);
+
+    private void SaveProcessButton_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (ProcessCombo.SelectedItem is not ProcessEntry selected)
         {
-            if (hookId != IntPtr.Zero) UnhookWindowsHookEx(hookId);
-            base.OnClosed(e);
+            SetStatus("Сначала выберите процесс.", DangerBrush);
+            return;
         }
 
-        // 🎯 Поиск цели (J = F10)
+        _settings.PreferredProcessName = selected.Name;
+        _settings.PreferredWindowTitle = selected.Title;
+        PersistUiSettings();
+        SetStatus($"По умолчанию: {selected.Name}", SuccessBrush);
+        UpdateSaveButtonVisual(true);
+    }
 
-
-
-
-        private  void SearchTimer_Tick(object? sender, EventArgs e)
+    private void ProcessCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ProcessCombo.SelectedItem is ProcessEntry entry)
         {
-            if (targetHwnd == IntPtr.Zero || pickUp) return;
+            _selectedPid = entry.Id;
+            UpdateSaveButtonVisual(IsPreferred(entry));
+            if (!_isRunning)
+                SetStatus($"Выбран: {entry.Name} (PID {entry.Id})", MutedBrush);
+        }
+        else
+        {
+            UpdateSaveButtonVisual(false);
+        }
+    }
 
-            bool targetVisible = HP_Target_Monster.Scan(targetHwnd);
-            var playerDead = HpPlayerCheck.Scan(targetHwnd);
-            bool chosen = Target_Chosen.IsSelected(targetHwnd);
+    private void StartButton_OnClick(object sender, RoutedEventArgs e) => StartBot();
+    private void StopButton_OnClick(object sender, RoutedEventArgs e) => StopBot();
+    private async void CaptureButton_OnClick(object sender, RoutedEventArgs e) =>
+        await CaptureScreenshotAsync();
 
-            if (!targetVisible && !playerDead.IsReady && !chosen)
+    private void StartBot()
+    {
+        if (_isCapturing || _isRunning)
+            return;
+
+        if (ProcessCombo.SelectedItem is not ProcessEntry selected)
+        {
+            SetStatus("Выберите процесс.", DangerBrush);
+            return;
+        }
+
+        var live = ResolveLiveEntry(selected);
+        if (live is null)
+        {
+            SetStatus("Процесс недоступен. Обновите список.", DangerBrush);
+            RefreshProcesses(keepSelection: false);
+            return;
+        }
+
+        _sampleHwnd = live.MainWindowHandle;
+        PersistUiSettings();
+        RebuildKeyInput();
+        _attackLoop?.Reset();
+        SetRunning(true);
+        StartSampling();
+        SampleOnce();
+        SetStatus("Работает…", SuccessBrush);
+    }
+
+    private void StopBot()
+    {
+        if (_isCapturing)
+            return;
+
+        if (!_isRunning)
+        {
+            SetStatus("Уже остановлено.", MutedBrush);
+            return;
+        }
+
+        StopSampling();
+        SetRunning(false);
+        SetStatus("Остановлено.", MutedBrush);
+    }
+
+    private void StartSampling()
+    {
+        StopSampling();
+        _sampleTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(33) };
+        _sampleTimer.Tick += SampleTimer_OnTick;
+        _sampleTimer.Start();
+    }
+
+    private void StopSampling()
+    {
+        if (_sampleTimer is null)
+            return;
+        _sampleTimer.Stop();
+        _sampleTimer.Tick -= SampleTimer_OnTick;
+        _sampleTimer = null;
+    }
+
+    private void SampleTimer_OnTick(object? sender, EventArgs e) => SampleOnce();
+
+    private void SampleOnce()
+    {
+        if (!_isRunning)
+            return;
+
+        if (_selectedPid is int pid)
+        {
+            try
             {
-                string keyToSend = searchTime switch
-                {
-                    1 => "F",
-                    2 => "G",
-                    3 => "H",
-                    4 => "I",
-                    5 => "J",
-                    _ => "F"
-                };
-
-                teensy.Write(keyToSend);
-                 Task.Delay(200);
-                searchTime = searchTime >= 5 ? 1 : searchTime + 1;
+                using var process = Process.GetProcessById(pid);
+                if (process.MainWindowHandle != nint.Zero)
+                    _sampleHwnd = process.MainWindowHandle;
             }
-        }
-
-
-
-
-
-        private void AttackTimer_Tick(object? sender, EventArgs e)
-        {
-            if (targetHwnd == IntPtr.Zero || pickUp) return;
-
-            bool isCasting = CastedSpell.IsCasting(targetHwnd);
-            bool targetVisible = HP_Target_Monster.Scan(targetHwnd);
-            var playerDead = HpPlayerCheck.Scan(targetHwnd);
-
-            if (targetVisible && !playerDead.IsReady && !isCasting)
+            catch
             {
-                teensy.Write("3");
-                Task.Delay(200);
-                teensy.Write("1");
-                Task.Delay(200);
-            }
-        }
-
-
-        private void PickUpTimer_Tick(object? sender, EventArgs e)
-        {
-            if (targetHwnd == IntPtr.Zero) return;
-
-            bool chosen = Target_Chosen.IsSelected(targetHwnd);
-            bool targetVisible = HP_Target_Monster.Scan(targetHwnd);
-            var playerDead = HpPlayerCheck.Scan(targetHwnd);
-
-            if (chosen && !targetVisible && !playerDead.IsReady)
-            {
-                pickUp = true;
-                teensy.Write("L");
-                teensy.Write("L");
-                Task.Delay(1000);
-                teensy.Write("X");
-
-                pickUp = false;
-            }
-        }
-
-
-        private void PlayerDead_Tick(object? sender, EventArgs e)
-        {
-            if (targetHwnd == IntPtr.Zero) return;
-
-            var playerDead = HpPlayerCheck.Scan(targetHwnd);
-            if (playerDead.IsReady)
-            {
-                SetCursorPos(playerDead.ClickX, playerDead.ClickY);
-               Task.Delay(3000);
-                teensy.Write("[");
-                 Task.Delay(1000);
-                StopTimers();
-              Task.Delay(1000);
-                teensy.Write("]");
-            }
-        }
-
-
-
-
-        // 🧠 Глобальный хук клавиш
-        private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
-        {
-            if (nCode >= 0 && wParam == (IntPtr)WM_KEYDOWN)
-            {
-                int vk = Marshal.ReadInt32(lParam);
-                if (vk == KeyInterop.VirtualKeyFromKey(Key.PageUp))
-                    Dispatcher.Invoke(StartTimers);
-                else if (vk == KeyInterop.VirtualKeyFromKey(Key.PageDown))
-                    Dispatcher.Invoke(StopTimers);
-            }
-            return CallNextHookEx(hookId, nCode, wParam, lParam);
-        }
-
-        // ⏯️ Старт / Стоп
-        private void StartTimers()
-        {
-            if (targetHwnd == IntPtr.Zero)
-            {
-                MessageBox.Show("Выберите окно LU4", "Ошибка");
+                StopBot();
+                SetStatus("Процесс закрыт.", DangerBrush);
                 return;
             }
-
-            attackTimer.Start();
-            searchTimer.Start();
-            pickUpTimer.Start();
-          
-            playerDead.Start();
-            btnStart.IsEnabled = false;
-            btnStop.IsEnabled = true;
         }
 
-        private void StopTimers()
+        UpdateCombatAndBars();
+        UpdatePixelProbe();
+    }
+
+    private void UpdateCombatAndBars()
+    {
+        if (!StatusBarReader.TryReadAll(_sampleHwnd, _barProfile, out var readings, out var error))
         {
-            attackTimer.Stop();
-            searchTimer.Stop();
-            pickUpTimer.Stop();
-        
-            playerDead.Stop();
-            btnStart.IsEnabled = true;
-            btnStop.IsEnabled = false;
+            if (!string.IsNullOrWhiteSpace(error))
+                SetStatus(error, DangerBrush);
+            return;
         }
 
-        // 📸 Скриншот по HWND
-        private void btnScreenshot_Click(object sender, RoutedEventArgs e)
+        var cp = readings.FirstOrDefault(r => r.Id.Equals("cp", StringComparison.OrdinalIgnoreCase));
+        var hp = readings.FirstOrDefault(r => r.Id.Equals("hp", StringComparison.OrdinalIgnoreCase));
+        var mp = readings.FirstOrDefault(r => r.Id.Equals("mp", StringComparison.OrdinalIgnoreCase));
+        var tgt = readings.FirstOrDefault(r => r.Id.Equals("target_hp", StringComparison.OrdinalIgnoreCase));
+
+        if (!PixelProbeReader.TryReadAll(_sampleHwnd, _barProfile, out var probes, out var probeError))
         {
-            if (targetHwnd == IntPtr.Zero)
+            if (!string.IsNullOrWhiteSpace(probeError))
+                SetStatus(probeError, DangerBrush);
+            return;
+        }
+
+        var combat = PixelProbeReader.BuildCombatState(probes, tgt);
+
+        if (_attackLoop is not null)
+        {
+            _attackLoop.TargetHwnd = _sampleHwnd;
+            _attackLoop.Tick(combat);
+        }
+
+        if (_monitor is { IsVisible: true })
+        {
+            _monitor.SetBars(
+                cp?.FillPercent ?? 0,
+                hp?.FillPercent ?? 0,
+                mp?.FillPercent ?? 0,
+                FormatBarPercent(cp),
+                FormatBarPercent(hp),
+                FormatBarPercent(mp),
+                FormatTargetPercent(tgt),
+                tgt is { Detected: true } ? tgt.FillPercent : 0);
+            _monitor.SetCombat(combat);
+            _monitor.SetHint(
+                $"Окно: {StatusBarReader.LastClientWidth}×{StatusBarReader.LastClientHeight} · " +
+                $"scale {StatusBarReader.LastScaleX:0.###}×{StatusBarReader.LastScaleY:0.###}");
+        }
+
+        var attackInfo = _attackLoop is { Enabled: true }
+            ? $" · {_attackLoop.LastKeyLabel}×{_attackLoop.PressCount}/{_attackLoop.LastSkipReason}"
+            : "";
+
+        SetStatus(
+            $"{combat.Summary} · TGT {FormatTargetPercent(tgt)}{attackInfo}",
+            SuccessBrush);
+    }
+
+    private void UpdatePixelProbe()
+    {
+        if (_monitor is not { IsVisible: true })
+            return;
+
+        if (!_monitor.TryGetCoordinates(out var x, out var y))
+        {
+            _monitor.ClearPixel();
+            return;
+        }
+
+        if (!WindowCaptureService.TryReadClientPixel(_sampleHwnd, x, y, out var r, out var g, out var b, out _))
+        {
+            _monitor.ClearPixel();
+            return;
+        }
+
+        _monitor.SetPixel(r, g, b);
+    }
+
+    private async Task CaptureScreenshotAsync()
+    {
+        if (_isCapturing)
+            return;
+
+        if (ProcessCombo.SelectedItem is not ProcessEntry selected)
+        {
+            SetStatus("Для скрина выберите процесс.", DangerBrush);
+            return;
+        }
+
+        var live = ResolveLiveEntry(selected);
+        if (live is null)
+        {
+            SetStatus("Процесс недоступен.", DangerBrush);
+            RefreshProcesses(keepSelection: false);
+            return;
+        }
+
+        _isCapturing = true;
+        CaptureButton.IsEnabled = false;
+        SetStatus("Скриншот…", MutedBrush);
+
+        var previousOpacity = Opacity;
+        var wasTopmost = Topmost;
+        var monitorWasVisible = _monitor?.IsVisible == true;
+        Topmost = false;
+        Hide();
+        if (monitorWasVisible)
+            _monitor!.Hide();
+
+        try
+        {
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+            await Task.Delay(150);
+            var path = await Task.Run(() => WindowCaptureService.CaptureToBmp(live, CapturesDirectory));
+            SetStatus($"BMP: {Path.GetFileName(path)}", SuccessBrush);
+        }
+        catch (Exception ex)
+        {
+            SetStatus(ex.Message, DangerBrush);
+        }
+        finally
+        {
+            Opacity = previousOpacity;
+            Show();
+            if (monitorWasVisible)
+                _monitor!.Show();
+            Topmost = wasTopmost || TopmostCheck.IsChecked == true;
+            _isCapturing = false;
+            CaptureButton.IsEnabled = true;
+        }
+    }
+
+    private void RefreshProcesses(bool keepSelection)
+    {
+        var previousPid = keepSelection ? _selectedPid : null;
+        var processes = ProcessEnumerator.GetWindowedProcesses();
+        ProcessCombo.ItemsSource = processes;
+
+        ProcessEntry? selected = null;
+        if (previousPid is int pid)
+            selected = processes.FirstOrDefault(p => p.Id == pid);
+        selected ??= FindPreferred(processes);
+
+        if (selected is not null)
+        {
+            ProcessCombo.SelectedItem = selected;
+            _selectedPid = selected.Id;
+            UpdateSaveButtonVisual(IsPreferred(selected));
+            if (!_isRunning)
             {
-                MessageBox.Show("Выберите окно LU4");
-                return;
+                SetStatus(
+                    IsPreferred(selected)
+                        ? $"По умолчанию: {selected.Name}"
+                        : $"Выбран: {selected.Name}",
+                    IsPreferred(selected) ? SuccessBrush : MutedBrush);
             }
-
-            GetClientRect(targetHwnd, out var rc);
-            var origin = new POINT();
-            ClientToScreen(targetHwnd, ref origin);
-
-            int w = rc.Right - rc.Left;
-            int h = rc.Bottom - rc.Top;
-
-            using var bmp = new Bitmap(w, h);
-            using var g = Graphics.FromImage(bmp);
-            g.CopyFromScreen(origin.X, origin.Y, 0, 0, bmp.Size);
-
-            string file = $"{DateTime.Now:yyyy-MM-dd - HH-mm-ss}.bmp";
-            bmp.Save(file);
-            MessageBox.Show($"Скриншот сохранён:\n{file}");
+            return;
         }
 
-        // 🪟 Комбо-бокс выбора окна
-        private void cbWindows_DropDownOpened(object sender, EventArgs e)
+        ProcessCombo.SelectedItem = null;
+        _selectedPid = null;
+        UpdateSaveButtonVisual(false);
+        if (!_isRunning)
+            SetStatus("Процесс не найден. Выберите из списка.", DangerBrush);
+    }
+
+    private ProcessEntry? FindPreferred(IReadOnlyList<ProcessEntry> processes)
+    {
+        if (string.IsNullOrWhiteSpace(_settings.PreferredProcessName))
+            return null;
+
+        var byName = processes
+            .Where(p => string.Equals(p.Name, _settings.PreferredProcessName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (byName.Count == 0)
+            return null;
+
+        if (!string.IsNullOrWhiteSpace(_settings.PreferredWindowTitle))
         {
-            cbWindows.Items.Clear();
-            foreach (var p in Process.GetProcesses()
-                                      .Where(p => p.MainWindowHandle != IntPtr.Zero
-                                               && p.ProcessName.Contains("lu4", StringComparison.OrdinalIgnoreCase)))
+            var byTitle = byName.FirstOrDefault(p =>
+                string.Equals(p.Title, _settings.PreferredWindowTitle, StringComparison.OrdinalIgnoreCase));
+            if (byTitle is not null)
+                return byTitle;
+        }
+
+        return byName[0];
+    }
+
+    private bool IsPreferred(ProcessEntry entry) =>
+        !string.IsNullOrWhiteSpace(_settings.PreferredProcessName) &&
+        string.Equals(entry.Name, _settings.PreferredProcessName, StringComparison.OrdinalIgnoreCase);
+
+    private void UpdateSaveButtonVisual(bool isSavedSelection)
+    {
+        SaveProcessButton.Foreground = isSavedSelection
+            ? (Brush)Application.Current.Resources["AccentBrush"]
+            : (Brush)Application.Current.Resources["TextBrush"];
+    }
+
+    private static ProcessEntry? ResolveLiveEntry(ProcessEntry selected)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(selected.Id);
+            if (process.MainWindowHandle == nint.Zero)
+                return null;
+
+            return new ProcessEntry
             {
-                cbWindows.Items.Add(new WindowItem(p.MainWindowHandle, p.MainWindowTitle));
-            }
+                Id = process.Id,
+                Name = process.ProcessName,
+                Title = process.MainWindowTitle?.Trim() ?? selected.Title,
+                MainWindowHandle = process.MainWindowHandle
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void PersistUiSettings()
+    {
+        if (_monitor is not null)
+        {
+            _settings.SampleX = _monitor.SampleX;
+            _settings.SampleY = _monitor.SampleY;
         }
 
-        private void cbWindows_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        _settings.AlwaysOnTop = TopmostCheck.IsChecked == true;
+        _settings.AutoAttackEnabled = AutoAttackCheck.IsChecked == true;
+        _settings.InputBackend = "SendInput";
+        SettingsStore.Save(_settings);
+    }
+
+    private void EnsureBarProfileUpToDate()
+    {
+        var changed = false;
+        if (_barProfile.ReferenceWidth == 1920 && _barProfile.ReferenceHeight == 1080)
         {
-            if (cbWindows.SelectedItem is WindowItem wi)
-                targetHwnd = wi.Hwnd;
+            _barProfile.ReferenceWidth = 2560;
+            _barProfile.ReferenceHeight = 1440;
+            changed = true;
         }
 
-        // ❌ Закрытие
-        private void btnClose_Click(object sender, RoutedEventArgs e)
+        if (!_barProfile.Bars.Any(b => b.Id.Equals("target_hp", StringComparison.OrdinalIgnoreCase)))
         {
-            Application.Current.Shutdown();
+            _barProfile.Bars.Add(new StatusBarDefinition
+            {
+                Id = "target_hp", Name = "Target HP",
+                X1 = 1365, Y1 = 122, X2 = 1749, Y2 = 126,
+                R = 161, G = 57, B = 64, Tolerance = 42
+            });
+            changed = true;
         }
 
-        // 🖱️ Перетаскивание окна
-        private void Window_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        _barProfile.Probes ??= [];
+        if (!_barProfile.Probes.Any(p => p.Id.Equals("target_selected", StringComparison.OrdinalIgnoreCase)))
         {
-            DragMove();
+            _barProfile.Probes.Add(new PixelProbe
+            {
+                Id = "target_selected", Name = "Target selected",
+                X = 1665, Y = 28, R = 224, G = 211, B = 143, Tolerance = 35
+            });
+            changed = true;
         }
 
-        // 🎁 Класс для ComboBox
-        private class WindowItem
+        if (!_barProfile.Probes.Any(p => p.Id.Equals("target_dead", StringComparison.OrdinalIgnoreCase)))
         {
-            public IntPtr Hwnd { get; }
-            public string Title { get; }
-            public WindowItem(IntPtr hwnd, string title) => (Hwnd, Title) = (hwnd, title);
-            public override string ToString() => Title;
-        }
-        private void btnStart_Click(object sender, RoutedEventArgs e)
-        {
-            StartTimers();
+            _barProfile.Probes.Add(new PixelProbe
+            {
+                Id = "target_dead", Name = "Target dead",
+                X = 1345, Y = 52, R = 132, G = 85, B = 90, Tolerance = 35
+            });
+            changed = true;
         }
 
-        private void btnStop_Click(object sender, RoutedEventArgs e)
-        {
-            StopTimers();
-        }
+        if (!changed)
+            return;
 
+        try
+        {
+            File.WriteAllText(
+                StatusBarProfileStore.DefaultPath,
+                System.Text.Json.JsonSerializer.Serialize(_barProfile, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch
+        {
+            // ignore
+        }
+    }
+
+    private static string FormatBarPercent(StatusBarReading? reading)
+    {
+        if (reading is null) return "—";
+        if (!reading.Detected) return "0%";
+        return $"{reading.FillPercent:0}%";
+    }
+
+    private static string FormatTargetPercent(StatusBarReading? reading)
+    {
+        if (reading is null) return "—";
+        if (!reading.Detected) return "нет";
+        return $"{reading.FillPercent:0}%";
+    }
+
+    private void SetRunning(bool running)
+    {
+        _isRunning = running;
+        ProcessCombo.IsEnabled = !running;
+        RefreshButton.IsEnabled = !running;
+        SaveProcessButton.IsEnabled = !running;
+        StartButton.IsEnabled = !running;
+        StopButton.IsEnabled = running;
+        AutoAttackCheck.IsEnabled = !running;
+        StatusDot.Fill = running ? SuccessBrush : MutedBrush;
+    }
+
+    private void SetStatus(string message, Brush dotBrush)
+    {
+        StatusText.Text = message;
+        StatusDot.Fill = _isRunning ? SuccessBrush : dotBrush;
     }
 }

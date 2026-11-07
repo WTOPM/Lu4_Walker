@@ -1,0 +1,76 @@
+{
+  "referenceWidth": 2560,
+  "referenceHeight": 1440,
+  "bars": [
+    {
+      "id": "cp",
+      "name": "CP",
+      "x1": 70,
+      "y1": 12,
+      "x2": 409,
+      "y2": 30,
+      "r": 215,
+      "g": 142,
+      "b": 23,
+      "tolerance": 55
+    },
+    {
+      "id": "hp",
+      "name": "HP",
+      "x1": 70,
+      "y1": 31,
+      "x2": 421,
+      "y2": 49,
+      "r": 161,
+      "g": 57,
+      "b": 64,
+      "tolerance": 55
+    },
+    {
+      "id": "mp",
+      "name": "MP",
+      "x1": 70,
+      "y1": 50,
+      "x2": 432,
+      "y2": 68,
+      "r": 65,
+      "g": 121,
+      "b": 206,
+      "tolerance": 55
+    },
+    {
+      "id": "target_hp",
+      "name": "Target HP",
+      "x1": 1365,
+      "y1": 122,
+      "x2": 1749,
+      "y2": 126,
+      "r": 161,
+      "g": 57,
+      "b": 64,
+      "tolerance": 42
+    }
+  ],
+  "probes": [
+    {
+      "id": "target_selected",
+      "name": "Target selected",
+      "x": 1665,
+      "y": 28,
+      "r": 224,
+      "g": 211,
+      "b": 143,
+      "tolerance": 35
+    },
+    {
+      "id": "target_dead",
+      "name": "Target dead",
+      "x": 1345,
+      "y": 52,
+      "r": 132,
+      "g": 85,
+      "b": 90,
+      "tolerance": 35
+    }
+  ]
+}

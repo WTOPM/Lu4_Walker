@@ -1,95 +1,175 @@
-﻿<Window x:Class="LU4_Walker.MainWindow"
+﻿<Window x:Class="WTOPMBot.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="LU4 Walker"
+        Title="WTOPMBot"
         Width="420"
-        Height="250"
+        MinWidth="380"
+        SizeToContent="Height"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterScreen"
         WindowStyle="None"
-        Topmost="True"
-        ResizeMode="NoResize"
-        Background="#2C2C2C"
-        MouseLeftButtonDown="Window_MouseLeftButtonDown">
-
-    <Border BorderBrush="Gray" BorderThickness="1" CornerRadius="5" Background="#2C2C2C">
-        <Grid Margin="10">
+        AllowsTransparency="True"
+        Background="Transparent"
+        Icon="Assets/app.ico">
+    <Border Background="{StaticResource BgBrush}"
+            BorderBrush="#2A313C"
+            BorderThickness="1"
+            CornerRadius="14"
+            MouseLeftButtonDown="TitleBar_OnMouseLeftButtonDown">
+        <Grid Margin="18,12,18,14">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
-                <!-- Заголовок -->
                 <RowDefinition Height="Auto"/>
-                <!-- Комбо-бокс -->
                 <RowDefinition Height="Auto"/>
-                <!-- Старт / Стоп -->
-                <RowDefinition Height="Auto"/>
-                <!-- Скриншоты -->
-                <RowDefinition Height="Auto"/>
-                <!-- Подсказка -->
             </Grid.RowDefinitions>
 
-            <!-- Заголовок + Закрытие -->
-            <DockPanel Grid.Row="0" LastChildFill="False" Margin="0,0,0,10">
-                <TextBlock Text="LU4 Walker"
-                           FontWeight="Bold"
-                           FontSize="16"
-                           Foreground="White"
-                           VerticalAlignment="Center"/>
-                <Button Content="X"
-                        Width="30"
-                        Height="25"
-                        Background="DarkRed"
-                        Foreground="White"
-                        FontWeight="Bold"
-                        DockPanel.Dock="Right"
-                        Margin="5,0,0,0"
-                        Click="btnClose_Click"/>
+            <DockPanel Grid.Row="0" Margin="0,0,0,12">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <CheckBox x:Name="TopmostCheck"
+                              Style="{StaticResource TopmostCheck}"
+                              Content="Поверх"
+                              VerticalAlignment="Center"
+                              Margin="0,0,10,0"
+                              Checked="TopmostCheck_OnChanged"
+                              Unchecked="TopmostCheck_OnChanged"/>
+                    <Button Width="32" Height="28"
+                            Style="{StaticResource ChromeButton}"
+                            Content="─"
+                            ToolTip="Свернуть"
+                            Click="MinimizeButton_OnClick"/>
+                    <Button Width="32" Height="28"
+                            Style="{StaticResource ChromeCloseButton}"
+                            Content="✕"
+                            ToolTip="Закрыть"
+                            Click="CloseButton_OnClick"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Image Source="Assets/app.ico" Width="22" Height="22" Margin="0,0,8,0"
+                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <TextBlock Text="WTOPMBot"
+                               FontSize="20"
+                               FontWeight="Bold"
+                               Foreground="{StaticResource TextBrush}"
+                               VerticalAlignment="Center"/>
+                </StackPanel>
             </DockPanel>
 
-            <!-- Выбор окна -->
-            <StackPanel Orientation="Horizontal" Grid.Row="1" Margin="0,0,0,10">
-                <Label Content="LU4 окно:" Width="80" Foreground="White"/>
-                <ComboBox x:Name="cbWindows"
-                          Width="280"
-                          DropDownOpened="cbWindows_DropDownOpened"
-                          SelectionChanged="cbWindows_SelectionChanged"/>
-            </StackPanel>
+            <Border Grid.Row="1"
+                    Background="{StaticResource PanelBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="1"
+                    CornerRadius="14"
+                    Padding="14">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource FieldLabel}" Text="Процесс" Margin="0,0,0,6"/>
+                    <Grid Margin="0,0,0,12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="6"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="6"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <ComboBox x:Name="ProcessCombo"
+                                  Grid.Column="0"
+                                  Height="40"
+                                  MaxDropDownHeight="260"
+                                  DisplayMemberPath="DisplayName"
+                                  SelectionChanged="ProcessCombo_OnSelectionChanged"/>
+                        <Button x:Name="SaveProcessButton"
+                                Grid.Column="2"
+                                Width="40" Height="40"
+                                Style="{StaticResource GhostButton}"
+                                ToolTip="Сохранить процесс по умолчанию"
+                                Click="SaveProcessButton_OnClick"
+                                Content="★" FontSize="15"/>
+                        <Button x:Name="RefreshButton"
+                                Grid.Column="4"
+                                Width="40" Height="40"
+                                Style="{StaticResource GhostButton}"
+                                ToolTip="Обновить список"
+                                Click="RefreshButton_OnClick"
+                                Content="↻" FontSize="16"/>
+                    </Grid>
 
-            <!-- Старт / Стоп таймеров -->
-            <StackPanel Orientation="Horizontal" Grid.Row="2" HorizontalAlignment="Center" Margin="0,0,0,10">
-                <Button x:Name="btnStart"
-                        Content="Старт"
-                        FontWeight="Bold"
-                        Background="Green"
-                        Foreground="White"
-                        Width="100"
-                        Margin="5"
-                        Click="btnStart_Click"/>
-                <Button x:Name="btnStop"
-                        Content="Стоп"
-                        FontWeight="Bold"
-                        Background="Red"
-                        Foreground="White"
-                        Width="100"
-                        Margin="5"
-                        Click="btnStop_Click"
-                        IsEnabled="False"/>
-            </StackPanel>
+                    <CheckBox x:Name="AutoAttackCheck"
+                              Style="{StaticResource TopmostCheck}"
+                              Content="Автоатака 3 / 1 / 2"
+                              Margin="0,0,0,12"
+                              Checked="AutoAttackCheck_OnChanged"
+                              Unchecked="AutoAttackCheck_OnChanged"/>
 
-            <!-- Скриншоты по HWND -->
-            <StackPanel Orientation="Horizontal" Grid.Row="3" HorizontalAlignment="Center" Margin="0,0,0,10">
-                <Button x:Name="btnScreenshot"
-                        Content="📸"
-                        ToolTip="Скриншот окна LU4"
-                        Width="60"
-                        Margin="5"
-                        Click="btnScreenshot_Click"/>
-            </StackPanel>
+                    <Grid Margin="0,0,0,8">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="StartButton"
+                                Grid.Column="0"
+                                Height="44"
+                                Style="{StaticResource PrimaryToggle}"
+                                Click="StartButton_OnClick"
+                                ToolTip="Page Up"
+                                Content="Старт  PgUp"/>
+                        <Button x:Name="StopButton"
+                                Grid.Column="2"
+                                Height="44"
+                                Style="{StaticResource StopToggle}"
+                                Click="StopButton_OnClick"
+                                ToolTip="Page Down"
+                                Content="Стоп  PgDn"/>
+                    </Grid>
 
-            <!-- Подсказка -->
-            <TextBlock Grid.Row="4"
-                       Text="PageUp / PageDown — горячие клавиши. Все действия по выбранному окну LU4."
-                       Foreground="LightGray"
-                       FontStyle="Italic"
-                       FontSize="12"
-                       HorizontalAlignment="Center"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Name="CaptureButton"
+                                Grid.Column="0"
+                                Height="44"
+                                Padding="12,8"
+                                Style="{StaticResource CaptureButton}"
+                                Click="CaptureButton_OnClick"
+                                Content="Скрин  Ins"/>
+                        <Button x:Name="MonitorButton"
+                                Grid.Column="2"
+                                Height="44"
+                                Style="{StaticResource GhostButton}"
+                                Click="MonitorButton_OnClick"
+                                Content="Монитор"/>
+                    </Grid>
+
+                    <Border Margin="0,12,0,0"
+                            Background="#12161C"
+                            CornerRadius="10"
+                            Padding="12,10">
+                        <DockPanel>
+                            <Ellipse x:Name="StatusDot"
+                                     Width="8" Height="8"
+                                     Margin="0,3,8,0"
+                                     Fill="{StaticResource MutedBrush}"
+                                     VerticalAlignment="Top"/>
+                            <TextBlock x:Name="StatusText"
+                                       Text="Выберите процесс и нажмите Старт"
+                                       TextWrapping="Wrap"
+                                       FontSize="12"
+                                       Foreground="{StaticResource MutedBrush}"
+                                       VerticalAlignment="Center"/>
+                        </DockPanel>
+                    </Border>
+                </StackPanel>
+            </Border>
+
+            <TextBlock x:Name="HotkeyHintText"
+                       Grid.Row="2"
+                       Margin="2,10,2,0"
+                       FontSize="10"
+                       Foreground="#5C6675"
+                       TextWrapping="Wrap"
+                       Text="PgUp/PgDn · Ins=скрин"/>
         </Grid>
     </Border>
 </Window>
