@@ -4,18 +4,29 @@ public sealed class PixelProbe
 {
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
+
+    /// <summary>Top-left at profile ReferenceWidth×Height.</summary>
     public int X { get; set; }
     public int Y { get; set; }
+
+    /// <summary>Region size; 1×1 = single pixel.</summary>
+    public int Width { get; set; } = 1;
+    public int Height { get; set; } = 1;
+
     public byte R { get; set; }
     public byte G { get; set; }
     public byte B { get; set; }
     public int Tolerance { get; set; } = 35;
+
+    /// <summary>How many matching pixels required in the region.</summary>
+    public int MinMatches { get; set; } = 1;
 }
 
 public sealed class PixelProbeReading
 {
     public string Id { get; init; } = string.Empty;
     public bool Matched { get; init; }
+    public int MatchCount { get; init; }
     public byte SampleR { get; init; }
     public byte SampleG { get; init; }
     public byte SampleB { get; init; }
@@ -28,45 +39,36 @@ public sealed class CombatState
     public bool HasTargetHp { get; init; }
     public StatusBarReading? TargetHp { get; init; }
 
-    /// <summary>Dead = selected + no HP + death pixel.</summary>
-    public bool TargetDead => TargetSelected && !HasTargetHp && DeathPixel;
+    /// <summary>Skull detected in target portrait and no HP fill.</summary>
+    public bool TargetDead => DeathPixel;
 
-    /// <summary>Alive = selected pixel + HP bar only (death pixel ignored).</summary>
-    public bool TargetAlive => TargetSelected && HasTargetHp;
+    /// <summary>Alive = visible red fill on the target HP bar.</summary>
+    public bool TargetAlive => HasTargetHp && !DeathPixel;
 
-    public byte SuggestedKey
+    public BotAction SuggestedAction =>
+        TargetDead ? BotAction.Loot :
+        TargetAlive ? BotAction.Attack :
+        BotAction.SearchMob;
+
+    public string Summary => SuggestedAction switch
     {
-        get
-        {
-            if (!TargetSelected)
-                return 0x33; // '3'
-            if (TargetAlive)
-                return 0x31; // '1' — цель + HP
-            if (TargetDead)
-                return 0x32; // '2'
-            return 0;
-        }
-    }
-
-    public string SuggestedKeyLabel => SuggestedKey switch
-    {
-        0x31 => "1",
-        0x32 => "2",
-        0x33 => "3",
-        _ => "—"
+        BotAction.Loot => "Цель мертва — лут",
+        BotAction.Attack => "Цель есть — атакуем",
+        _ => "Цели нет — ищем"
     };
 
-    public string Summary
+    public static CombatState FromTargetHp(StatusBarReading? targetHp, bool deathDetected = false)
     {
-        get
+        // Only a real HP fill counts as alive. Empty trough alone is "no target".
+        var hasHp = targetHp is { Detected: true, FillPercent: > 0 };
+        // Skull + no HP fill = dead corpse still selected.
+        var dead = deathDetected && !hasHp;
+        return new CombatState
         {
-            if (!TargetSelected)
-                return "нет цели→3";
-            if (TargetAlive)
-                return "жива→1";
-            if (TargetDead)
-                return "мертв→2";
-            return "неясно";
-        }
+            TargetSelected = hasHp || dead,
+            DeathPixel = dead,
+            HasTargetHp = hasHp,
+            TargetHp = targetHp
+        };
     }
 }

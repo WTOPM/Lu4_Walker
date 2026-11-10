@@ -2,8 +2,8 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="WTOPMBot"
-        Width="420"
-        MinWidth="380"
+        Width="440"
+        MinWidth="400"
         SizeToContent="Height"
         ResizeMode="CanResize"
         WindowStartupLocation="CenterScreen"
@@ -12,56 +12,65 @@
         Background="Transparent"
         Icon="Assets/app.ico">
     <Border Background="{StaticResource BgBrush}"
-            BorderBrush="#2A313C"
+            BorderBrush="{StaticResource BorderBrush}"
             BorderThickness="1"
-            CornerRadius="14"
-            MouseLeftButtonDown="TitleBar_OnMouseLeftButtonDown">
-        <Grid Margin="18,12,18,14">
+            CornerRadius="10">
+        <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
                 <RowDefinition Height="Auto"/>
             </Grid.RowDefinitions>
 
-            <DockPanel Grid.Row="0" Margin="0,0,0,12">
-                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
-                    <CheckBox x:Name="TopmostCheck"
-                              Style="{StaticResource TopmostCheck}"
-                              Content="Поверх"
-                              VerticalAlignment="Center"
-                              Margin="0,0,10,0"
-                              Checked="TopmostCheck_OnChanged"
-                              Unchecked="TopmostCheck_OnChanged"/>
-                    <Button Width="32" Height="28"
-                            Style="{StaticResource ChromeButton}"
-                            Content="─"
-                            ToolTip="Свернуть"
-                            Click="MinimizeButton_OnClick"/>
-                    <Button Width="32" Height="28"
-                            Style="{StaticResource ChromeCloseButton}"
-                            Content="✕"
-                            ToolTip="Закрыть"
-                            Click="CloseButton_OnClick"/>
-                </StackPanel>
-                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Image Source="Assets/app.ico" Width="22" Height="22" Margin="0,0,8,0"
-                           RenderOptions.BitmapScalingMode="HighQuality"/>
-                    <TextBlock Text="WTOPMBot"
-                               FontSize="20"
-                               FontWeight="Bold"
-                               Foreground="{StaticResource TextBrush}"
-                               VerticalAlignment="Center"/>
-                </StackPanel>
-            </DockPanel>
+            <Border Grid.Row="0"
+                    Background="{StaticResource TitleBarBrush}"
+                    BorderBrush="{StaticResource BorderBrush}"
+                    BorderThickness="0,0,0,1"
+                    CornerRadius="10,10,0,0"
+                    Padding="14,10"
+                    MouseLeftButtonDown="TitleBar_OnMouseLeftButtonDown">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                        <CheckBox x:Name="TopmostCheck"
+                                  Style="{StaticResource TopmostCheck}"
+                                  Content="Поверх"
+                                  VerticalAlignment="Center"
+                                  Margin="0,0,10,0"
+                                  Checked="TopmostCheck_OnChanged"
+                                  Unchecked="TopmostCheck_OnChanged"/>
+                        <Button Width="32" Height="28"
+                                Style="{StaticResource ChromeButton}"
+                                Content="─"
+                                ToolTip="Свернуть"
+                                Click="MinimizeButton_OnClick"/>
+                        <Button Width="32" Height="28"
+                                Style="{StaticResource ChromeCloseButton}"
+                                Content="✕"
+                                ToolTip="Закрыть"
+                                Click="CloseButton_OnClick"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <Image Source="Assets/app.ico" Width="20" Height="20" Margin="0,0,8,0"
+                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                        <TextBlock Text="WTOPMBot"
+                                   FontSize="16"
+                                   FontWeight="SemiBold"
+                                   FontFamily="Segoe UI"
+                                   Foreground="{StaticResource TextBrush}"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </DockPanel>
+            </Border>
 
             <Border Grid.Row="1"
+                    Margin="14,12,14,0"
                     Background="{StaticResource PanelBrush}"
                     BorderBrush="{StaticResource BorderBrush}"
                     BorderThickness="1"
-                    CornerRadius="14"
+                    CornerRadius="8"
                     Padding="14">
                 <StackPanel>
-                    <TextBlock Style="{StaticResource FieldLabel}" Text="Процесс" Margin="0,0,0,6"/>
+                    <TextBlock Style="{StaticResource FieldLabel}" Text="Процесс"/>
                     <Grid Margin="0,0,0,12">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
@@ -72,79 +81,104 @@
                         </Grid.ColumnDefinitions>
                         <ComboBox x:Name="ProcessCombo"
                                   Grid.Column="0"
-                                  Height="40"
+                                  Height="38"
                                   MaxDropDownHeight="260"
                                   DisplayMemberPath="DisplayName"
                                   SelectionChanged="ProcessCombo_OnSelectionChanged"/>
                         <Button x:Name="SaveProcessButton"
                                 Grid.Column="2"
-                                Width="40" Height="40"
+                                Width="38" Height="38"
                                 Style="{StaticResource GhostButton}"
                                 ToolTip="Сохранить процесс по умолчанию"
                                 Click="SaveProcessButton_OnClick"
-                                Content="★" FontSize="15"/>
+                                Content="★" FontSize="14"/>
                         <Button x:Name="RefreshButton"
                                 Grid.Column="4"
-                                Width="40" Height="40"
+                                Width="38" Height="38"
                                 Style="{StaticResource GhostButton}"
                                 ToolTip="Обновить список"
                                 Click="RefreshButton_OnClick"
-                                Content="↻" FontSize="16"/>
+                                Content="↻" FontSize="15"/>
                     </Grid>
 
                     <CheckBox x:Name="AutoAttackCheck"
                               Style="{StaticResource TopmostCheck}"
-                              Content="Автоатака 3 / 1 / 2"
+                              Content="Автодействия (поиск / атака / лут)"
                               Margin="0,0,0,12"
                               Checked="AutoAttackCheck_OnChanged"
                               Unchecked="AutoAttackCheck_OnChanged"/>
 
-                    <Grid Margin="0,0,0,8">
+                    <TextBlock Style="{StaticResource FieldLabel}" Text="Teensy COM"/>
+                    <Grid Margin="0,0,0,6">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="8"/>
-                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="6"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
+                        <ComboBox x:Name="TeensyPortCombo"
+                                  Grid.Column="0"
+                                  Height="38"
+                                  SelectionChanged="TeensyPortCombo_OnSelectionChanged"/>
+                        <Button x:Name="RefreshTeensyButton"
+                                Grid.Column="2"
+                                Width="38" Height="38"
+                                Style="{StaticResource GhostButton}"
+                                ToolTip="Обновить COM-порты"
+                                Click="RefreshTeensyButton_OnClick"
+                                Content="↻" FontSize="15"/>
+                    </Grid>
+                    <TextBlock x:Name="TeensyStatusText"
+                               Margin="0,0,0,12"
+                               FontSize="11"
+                               FontFamily="Segoe UI"
+                               Foreground="{StaticResource MutedBrush}"
+                               TextWrapping="Wrap"
+                               Text="Прошейте Teensy: USB Type = Serial + Keyboard"/>
+
+                    <UniformGrid Columns="2" Margin="0,0,0,8">
                         <Button x:Name="StartButton"
-                                Grid.Column="0"
-                                Height="44"
+                                Height="42"
+                                Margin="0,0,4,0"
                                 Style="{StaticResource PrimaryToggle}"
                                 Click="StartButton_OnClick"
                                 ToolTip="Page Up"
                                 Content="Старт  PgUp"/>
                         <Button x:Name="StopButton"
-                                Grid.Column="2"
-                                Height="44"
+                                Height="42"
+                                Margin="4,0,0,0"
                                 Style="{StaticResource StopToggle}"
                                 Click="StopButton_OnClick"
                                 ToolTip="Page Down"
                                 Content="Стоп  PgDn"/>
-                    </Grid>
+                    </UniformGrid>
 
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="8"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
+                    <UniformGrid Columns="3">
                         <Button x:Name="CaptureButton"
-                                Grid.Column="0"
-                                Height="44"
-                                Padding="12,8"
+                                Height="40"
+                                Margin="0,0,4,0"
+                                Padding="6,6"
                                 Style="{StaticResource CaptureButton}"
                                 Click="CaptureButton_OnClick"
-                                Content="Скрин  Ins"/>
+                                Content="Скрин"/>
                         <Button x:Name="MonitorButton"
-                                Grid.Column="2"
-                                Height="44"
+                                Height="40"
+                                Margin="2,0"
                                 Style="{StaticResource GhostButton}"
                                 Click="MonitorButton_OnClick"
                                 Content="Монитор"/>
-                    </Grid>
+                        <Button x:Name="KeysButton"
+                                Height="40"
+                                Margin="4,0,0,0"
+                                Style="{StaticResource GhostButton}"
+                                Click="KeysButton_OnClick"
+                                Content="Клавиши"/>
+                    </UniformGrid>
 
                     <Border Margin="0,12,0,0"
-                            Background="#12161C"
-                            CornerRadius="10"
+                            Background="{StaticResource FieldBgBrush}"
+                            BorderBrush="{StaticResource BorderBrush}"
+                            BorderThickness="1"
+                            CornerRadius="6"
                             Padding="12,10">
                         <DockPanel>
                             <Ellipse x:Name="StatusDot"
@@ -152,12 +186,36 @@
                                      Margin="0,3,8,0"
                                      Fill="{StaticResource MutedBrush}"
                                      VerticalAlignment="Top"/>
-                            <TextBlock x:Name="StatusText"
-                                       Text="Выберите процесс и нажмите Старт"
-                                       TextWrapping="Wrap"
-                                       FontSize="12"
-                                       Foreground="{StaticResource MutedBrush}"
-                                       VerticalAlignment="Center"/>
+                            <StackPanel>
+                                <TextBlock x:Name="StatusSituationText"
+                                           Text="Выберите процесс и нажмите Старт"
+                                           TextWrapping="Wrap"
+                                           FontSize="13"
+                                           FontWeight="SemiBold"
+                                           FontFamily="Segoe UI"
+                                           Foreground="{StaticResource TextBrush}"/>
+                                <TextBlock x:Name="StatusActionText"
+                                           Text=""
+                                           TextWrapping="Wrap"
+                                           FontSize="12"
+                                           FontFamily="Segoe UI"
+                                           Margin="0,4,0,0"
+                                           Foreground="{StaticResource AccentBrush}"/>
+                                <TextBlock x:Name="StatusPhaseText"
+                                           Text=""
+                                           TextWrapping="Wrap"
+                                           FontSize="11"
+                                           FontFamily="Segoe UI"
+                                           Margin="0,3,0,0"
+                                           Foreground="{StaticResource MutedBrush}"/>
+                                <TextBlock x:Name="StatusBarsText"
+                                           Text=""
+                                           TextWrapping="Wrap"
+                                           FontSize="11"
+                                           FontFamily="Segoe UI"
+                                           Margin="0,4,0,0"
+                                           Foreground="#5C6675"/>
+                            </StackPanel>
                         </DockPanel>
                     </Border>
                 </StackPanel>
@@ -165,8 +223,9 @@
 
             <TextBlock x:Name="HotkeyHintText"
                        Grid.Row="2"
-                       Margin="2,10,2,0"
+                       Margin="16,10,16,12"
                        FontSize="10"
+                       FontFamily="Segoe UI"
                        Foreground="#5C6675"
                        TextWrapping="Wrap"
                        Text="PgUp/PgDn · Ins=скрин"/>

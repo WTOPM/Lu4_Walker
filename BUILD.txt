@@ -1,0 +1,18 @@
+WTOPMBot — сборка (запускай сам после правок агента)
+
+Из корня проекта (E:\WTOPMPro\Lu4_Walker):
+
+  Debug:
+    dotnet build -c Debug
+
+  Release (то, чем обычно пользуешься):
+    dotnet build -c Release
+
+  Запуск Release:
+    .\bin\Release\net8.0-windows\WTOPMBot.exe
+
+  Чистая пересборка Release:
+    dotnet clean -c Release
+    dotnet build -c Release
+
+После правок агента — собери Release и запускай exe оттуда, не Debug.

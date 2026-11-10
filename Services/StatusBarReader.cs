@@ -45,7 +45,7 @@ public static class StatusBarReader
 
         foreach (var raw in profile.Bars)
         {
-            var bar = ScaleBar(raw, scaleX, scaleY);
+            var bar = ResolveBar(raw, clientW, clientH, scaleX, scaleY);
 
             var y1 = Math.Min(bar.Y1, bar.Y2);
             var y2 = Math.Max(bar.Y1, bar.Y2);
@@ -110,19 +110,51 @@ public static class StatusBarReader
         Detected = false
     };
 
-    private static StatusBarDefinition ScaleBar(StatusBarDefinition bar, double scaleX, double scaleY) => new()
+    /// <summary>
+    /// Prefer percentage coords from auto-calibration; fall back to reference-pixel scaling.
+    /// </summary>
+    private static StatusBarDefinition ResolveBar(
+        StatusBarDefinition bar,
+        int clientW,
+        int clientH,
+        double scaleX,
+        double scaleY)
     {
-        Id = bar.Id,
-        Name = bar.Name,
-        X1 = (int)Math.Round(bar.X1 * scaleX),
-        Y1 = (int)Math.Round(bar.Y1 * scaleY),
-        X2 = (int)Math.Round(bar.X2 * scaleX),
-        Y2 = (int)Math.Round(bar.Y2 * scaleY),
-        R = bar.R,
-        G = bar.G,
-        B = bar.B,
-        Tolerance = bar.Tolerance
-    };
+        if (bar.HasPercents)
+        {
+            return new StatusBarDefinition
+            {
+                Id = bar.Id,
+                Name = bar.Name,
+                X1 = (int)Math.Round(bar.X1Pct / 100.0 * clientW),
+                Y1 = (int)Math.Round(bar.Y1Pct / 100.0 * clientH),
+                X2 = (int)Math.Round(bar.X2Pct / 100.0 * clientW),
+                Y2 = (int)Math.Round(bar.Y2Pct / 100.0 * clientH),
+                X1Pct = bar.X1Pct,
+                Y1Pct = bar.Y1Pct,
+                X2Pct = bar.X2Pct,
+                Y2Pct = bar.Y2Pct,
+                R = bar.R,
+                G = bar.G,
+                B = bar.B,
+                Tolerance = bar.Tolerance
+            };
+        }
+
+        return new StatusBarDefinition
+        {
+            Id = bar.Id,
+            Name = bar.Name,
+            X1 = (int)Math.Round(bar.X1 * scaleX),
+            Y1 = (int)Math.Round(bar.Y1 * scaleY),
+            X2 = (int)Math.Round(bar.X2 * scaleX),
+            Y2 = (int)Math.Round(bar.Y2 * scaleY),
+            R = bar.R,
+            G = bar.G,
+            B = bar.B,
+            Tolerance = bar.Tolerance
+        };
+    }
 
     /// <summary>
     /// Target HP over world background: need contiguous burgundy, not speckled leaves.
@@ -205,7 +237,7 @@ public static class StatusBarReader
         // Fill % from left with small gaps (digits / AA), requiring a real contiguous body.
         var lastFill = -1;
         var miss = 0;
-        const int missLimit = 14;
+        const int missLimit = 22;
         var matched = 0;
         for (var i = 0; i < width; i++)
         {
@@ -259,22 +291,8 @@ public static class StatusBarReader
             };
         }
 
-        // Empty target frame.
-        var emptyRatio = emptyHits / (double)width;
-        if (emptyRatio >= 0.35 && fillRatio < 0.12 && longest < minRun)
-        {
-            return new StatusBarReading
-            {
-                Id = bar.Id,
-                Name = bar.Name,
-                FillPercent = 0,
-                Detected = true,
-                SampleR = first.R,
-                SampleG = first.G,
-                SampleB = first.B
-            };
-        }
-
+        // No reliable red fill: treat as "no target" (do not mark Detected —
+        // empty trough / world dirt previously froze combat on BotAction.None).
         return new StatusBarReading
         {
             Id = bar.Id,

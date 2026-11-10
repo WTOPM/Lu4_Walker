@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using WTOPMBot.Models;
@@ -72,13 +73,17 @@ public partial class MonitorWindow : Window
 
     public void SetCombat(CombatState combat)
     {
-        TargetSelectedText.Text = combat.TargetSelected ? "Цель: да" : "Цель: нет";
-        TargetSelectedDot.Fill = combat.TargetSelected ? SuccessBrush : MutedBrush;
+        if (combat.TargetDead)
+        {
+            TargetSelectedText.Text = "Цель: труп (череп) — лут";
+            TargetSelectedDot.Fill = DangerBrush;
+            return;
+        }
 
-        TargetDeadText.Text = !combat.TargetSelected
-            ? "Мёртв: —"
-            : combat.TargetDead ? "Мёртв: да" : "Мёртв: нет";
-        TargetDeadDot.Fill = combat.TargetDead ? DangerBrush : MutedBrush;
+        TargetSelectedText.Text = combat.TargetSelected
+            ? (combat.HasTargetHp ? "Цель: полоска найдена" : "Цель: рамка без HP")
+            : "Цель: нет";
+        TargetSelectedDot.Fill = combat.TargetSelected ? SuccessBrush : MutedBrush;
     }
 
     public void SetHint(string text) => BarsHintText.Text = text;
@@ -119,8 +124,25 @@ public partial class MonitorWindow : Window
 
     private void TitleBar_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ChangedButton == MouseButton.Left)
-            DragMove();
+        if (e.ChangedButton != MouseButton.Left || e.ButtonState != MouseButtonState.Pressed)
+            return;
+        if (e.OriginalSource is DependencyObject src &&
+            (FindVisualParent<Button>(src) is not null || FindVisualParent<CheckBox>(src) is not null))
+            return;
+        DragMove();
+    }
+
+    private static T? FindVisualParent<T>(DependencyObject child) where T : DependencyObject
+    {
+        var current = child;
+        while (current is not null)
+        {
+            if (current is T match)
+                return match;
+            current = System.Windows.Media.VisualTreeHelper.GetParent(current);
+        }
+
+        return null;
     }
 
     private void MinimizeButton_OnClick(object sender, RoutedEventArgs e) =>

@@ -22,7 +22,14 @@ public static class SettingsStore
                 return new AppSettings();
 
             var json = File.ReadAllText(SettingsPath);
-            return JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
+            var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
+            settings.KeyBinds ??= KeyBindProfile.CreateDefault();
+            settings.KeyBinds.EnsureComplete();
+            settings.NextTargetAttempts = Math.Clamp(settings.NextTargetAttempts, 0, 20);
+            settings.ApproachNextTargetIntervalMs = Math.Clamp(settings.ApproachNextTargetIntervalMs, 300, 10000);
+            settings.LootAttempts = Math.Clamp(settings.LootAttempts, 1, 20);
+            settings.LootIntervalMs = Math.Clamp(settings.LootIntervalMs, 200, 10000);
+            return settings;
         }
         catch
         {

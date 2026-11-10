@@ -13,13 +13,23 @@
         Icon="Assets/app.ico"
         ShowInTaskbar="True">
     <Border Background="{StaticResource BgBrush}"
-            BorderBrush="#2A313C"
+            BorderBrush="{StaticResource BorderBrush}"
             BorderThickness="1"
-            CornerRadius="14"
-            MouseLeftButtonDown="TitleBar_OnMouseLeftButtonDown">
-    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="20,14,20,16">
-        <StackPanel>
-            <DockPanel Margin="0,0,0,14">
+            CornerRadius="10">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Background="{StaticResource TitleBarBrush}"
+                BorderBrush="{StaticResource BorderBrush}"
+                BorderThickness="0,0,0,1"
+                CornerRadius="10,10,0,0"
+                Padding="14,10"
+                MouseLeftButtonDown="TitleBar_OnMouseLeftButtonDown">
+            <DockPanel>
                 <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
                     <CheckBox x:Name="MonitorTopmostCheck"
                               Style="{StaticResource TopmostCheck}"
@@ -40,15 +50,20 @@
                             Click="CloseButton_OnClick"/>
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Image Source="Assets/app.ico" Width="22" Height="22" Margin="0,0,8,0"
+                    <Image Source="Assets/app.ico" Width="20" Height="20" Margin="0,0,8,0"
                            RenderOptions.BitmapScalingMode="HighQuality"/>
                     <TextBlock Text="Монитор"
-                               FontSize="20"
-                               FontWeight="Bold"
+                               FontSize="16"
+                               FontWeight="SemiBold"
+                               FontFamily="Segoe UI"
                                Foreground="{StaticResource TextBrush}"
                                VerticalAlignment="Center"/>
                 </StackPanel>
             </DockPanel>
+        </Border>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16,12,16,14">
+        <StackPanel>
 
             <!-- Pixel probe -->
             <TextBlock Style="{StaticResource FieldLabel}" Text="Пробник пикселя"/>
@@ -158,25 +173,12 @@
                         </Border>
                         <TextBlock x:Name="TargetHpPercentText" Grid.Column="2" Text="—" Margin="8,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"/>
                     </Grid>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="8"/>
-                            <ColumnDefinition Width="*"/>
-                        </Grid.ColumnDefinitions>
-                        <Border Background="#1E242E" CornerRadius="10" Padding="10,8">
-                            <StackPanel Orientation="Horizontal">
-                                <Ellipse x:Name="TargetSelectedDot" Width="8" Height="8" Fill="#5C6675" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="TargetSelectedText" Text="Цель: —" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Border>
-                        <Border Grid.Column="2" Background="#1E242E" CornerRadius="10" Padding="10,8">
-                            <StackPanel Orientation="Horizontal">
-                                <Ellipse x:Name="TargetDeadDot" Width="8" Height="8" Fill="#5C6675" Margin="0,0,8,0" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="TargetDeadText" Text="Мёртв: —" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"/>
-                            </StackPanel>
-                        </Border>
-                    </Grid>
+                    <Border Background="#1E242E" CornerRadius="10" Padding="10,8">
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse x:Name="TargetSelectedDot" Width="8" Height="8" Fill="#5C6675" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="TargetSelectedText" Text="Цель: —" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
             </Border>
 
@@ -184,8 +186,9 @@
                        FontSize="11"
                        Foreground="#5C6675"
                        TextWrapping="Wrap"
-                       Text="Профиль: profiles/player_bars.json"/>
+                       Text="Автокалибровка: свои 0,0–500,100 · цель 1250,0–1700,130"/>
         </StackPanel>
     </ScrollViewer>
+    </Grid>
     </Border>
 </Window>

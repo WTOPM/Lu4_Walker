@@ -23,8 +23,13 @@ public static class StatusBarProfileStore
             {
                 var json = File.ReadAllText(DefaultPath);
                 var loaded = JsonSerializer.Deserialize<StatusBarProfile>(json, JsonOptions);
-                if (loaded?.Bars is { Count: > 0 })
+                if (loaded is not null)
+                {
+                    loaded.Probes ??= [];
+                    loaded.Bars ??= [];
+                    EnsureDeathSkullProbe(loaded);
                     return loaded;
+                }
             }
         }
         catch
@@ -33,62 +38,65 @@ public static class StatusBarProfileStore
         }
 
         var defaults = CreateDefault();
+        Save(defaults);
+        return defaults;
+    }
+
+    public static void Save(StatusBarProfile profile)
+    {
         try
         {
+            EnsureDeathSkullProbe(profile);
             Directory.CreateDirectory(Path.GetDirectoryName(DefaultPath)!);
-            File.WriteAllText(DefaultPath, JsonSerializer.Serialize(defaults, JsonOptions));
+            File.WriteAllText(DefaultPath, JsonSerializer.Serialize(profile, JsonOptions));
         }
         catch
         {
             // Ignore write failures (e.g. read-only folder).
         }
-
-        return defaults;
     }
 
-    public static StatusBarProfile CreateDefault() => new()
+    /// <summary>
+    /// Empty bars — coordinates come from <see cref="StatusBarAutoCalibrator"/>.
+    /// Skull probe for corpse detection is always ensured.
+    /// </summary>
+    public static StatusBarProfile CreateDefault()
     {
-        ReferenceWidth = 2560,
-        ReferenceHeight = 1440,
-        Bars =
-        [
-            new StatusBarDefinition
-            {
-                Id = "cp", Name = "CP",
-                X1 = 70, Y1 = 12, X2 = 409, Y2 = 30,
-                R = 215, G = 142, B = 23, Tolerance = 55
-            },
-            new StatusBarDefinition
-            {
-                Id = "hp", Name = "HP",
-                X1 = 70, Y1 = 31, X2 = 421, Y2 = 49,
-                R = 161, G = 57, B = 64, Tolerance = 55
-            },
-            new StatusBarDefinition
-            {
-                Id = "mp", Name = "MP",
-                X1 = 70, Y1 = 50, X2 = 432, Y2 = 68,
-                R = 65, G = 121, B = 206, Tolerance = 55
-            },
-            new StatusBarDefinition
-            {
-                Id = "target_hp", Name = "Target HP",
-                X1 = 1365, Y1 = 122, X2 = 1749, Y2 = 126,
-                R = 161, G = 57, B = 64, Tolerance = 42
-            }
-        ],
-        Probes =
-        [
-            new PixelProbe
-            {
-                Id = "target_selected", Name = "Target selected",
-                X = 1665, Y = 28, R = 224, G = 211, B = 143, Tolerance = 35
-            },
-            new PixelProbe
-            {
-                Id = "target_dead", Name = "Target dead",
-                X = 1345, Y = 52, R = 132, G = 85, B = 90, Tolerance = 35
-            }
-        ]
-    };
+        var profile = new StatusBarProfile
+        {
+            ReferenceWidth = StatusBarAutoCalibrator.ReferenceWidth,
+            ReferenceHeight = StatusBarAutoCalibrator.ReferenceHeight,
+            AutoCalibrated = false,
+            Bars = [],
+            Probes = []
+        };
+        EnsureDeathSkullProbe(profile);
+        return profile;
+    }
+
+    /// <summary>
+    /// Portrait skull region from 2560×1440 captures (alive wasp vs dead skull).
+    /// Region [1325,48]–[1341,64], RGB(45,20,20)±15 → alive 0 / dead ~87 matches.
+    /// </summary>
+    public static void EnsureDeathSkullProbe(StatusBarProfile profile)
+    {
+        profile.Probes ??= [];
+        profile.Probes.RemoveAll(p =>
+            p.Id.Equals(PixelProbeReader.TargetDeadId, StringComparison.OrdinalIgnoreCase));
+
+        profile.Probes.Add(new PixelProbe
+        {
+            Id = PixelProbeReader.TargetDeadId,
+            Name = "Череп (смерть)",
+            X = 1325,
+            Y = 48,
+            Width = 17,
+            Height = 17,
+            R = 45,
+            G = 20,
+            B = 20,
+            Tolerance = 15,
+            MinMatches = 30
+        });
+    }
 }

@@ -6,6 +6,12 @@ public interface IKeyInput : IDisposable
     bool IsReady { get; }
     string? LastError { get; }
 
-    /// <param name="targetHwnd">Game window — focused before SendInput so keys don't hit the bot UI.</param>
-    void Tap(byte virtualKey, nint targetHwnd);
+    /// <summary>Tap a virtual-key. holdMs overrides human default when supported.</summary>
+    void Tap(byte virtualKey, nint targetHwnd, int? holdMs = null);
+
+    /// <summary>Left or right mouse click via hardware when supported.</summary>
+    void ClickMouse(bool leftButton, nint targetHwnd, int? holdMs = null);
+
+    /// <summary>Small relative mouse move (anti-pattern noise).</summary>
+    void NudgeMouse(int dx, int dy, nint targetHwnd);
 }

@@ -1,9 +1,12 @@
+using System.Drawing;
 using WTOPMBot.Models;
 
 namespace WTOPMBot.Services;
 
 public static class PixelProbeReader
 {
+    public const string TargetDeadId = "target_dead";
+
     public static bool TryReadAll(
         nint hwnd,
         StatusBarProfile profile,
@@ -28,21 +31,10 @@ public static class PixelProbeReader
 
         foreach (var probe in profile.Probes)
         {
-            var x = (int)Math.Round(probe.X * scaleX);
-            var y = (int)Math.Round(probe.Y * scaleY);
-
-            if (!WindowCaptureService.TryReadClientPixel(hwnd, x, y, out var r, out var g, out var b, out error))
+            var reading = ReadProbe(hwnd, probe, clientW, clientH, scaleX, scaleY, out error);
+            if (reading is null)
                 return false;
-
-            var dist = ColorDistance(r, g, b, probe.R, probe.G, probe.B);
-            list.Add(new PixelProbeReading
-            {
-                Id = probe.Id,
-                Matched = dist <= probe.Tolerance,
-                SampleR = r,
-                SampleG = g,
-                SampleB = b
-            });
+            list.Add(reading);
         }
 
         readings = list;
@@ -54,18 +46,87 @@ public static class PixelProbeReader
         IReadOnlyList<PixelProbeReading> probes,
         StatusBarReading? targetHp)
     {
-        var selected = probes.FirstOrDefault(p => p.Id.Equals("target_selected", StringComparison.OrdinalIgnoreCase))?.Matched == true;
-        var deathPixel = probes.FirstOrDefault(p => p.Id.Equals("target_dead", StringComparison.OrdinalIgnoreCase))?.Matched == true;
-        // Any detected fill counts as "HP present" (bar shown in UI).
-        var hasHp = targetHp is { Detected: true, FillPercent: > 0 };
+        var death = probes.Any(p =>
+            p.Id.Equals(TargetDeadId, StringComparison.OrdinalIgnoreCase) && p.Matched);
+        return CombatState.FromTargetHp(targetHp, death);
+    }
 
-        return new CombatState
+    private static PixelProbeReading? ReadProbe(
+        nint hwnd,
+        PixelProbe probe,
+        int clientW,
+        int clientH,
+        double scaleX,
+        double scaleY,
+        out string? error)
+    {
+        error = null;
+        var x = (int)Math.Round(probe.X * scaleX);
+        var y = (int)Math.Round(probe.Y * scaleY);
+        var w = Math.Max(1, (int)Math.Round(Math.Max(1, probe.Width) * scaleX));
+        var h = Math.Max(1, (int)Math.Round(Math.Max(1, probe.Height) * scaleY));
+
+        x = Math.Clamp(x, 0, clientW - 1);
+        y = Math.Clamp(y, 0, clientH - 1);
+        w = Math.Clamp(w, 1, clientW - x);
+        h = Math.Clamp(h, 1, clientH - y);
+
+        if (w <= 1 && h <= 1)
         {
-            TargetSelected = selected,
-            DeathPixel = deathPixel,
-            HasTargetHp = hasHp,
-            TargetHp = targetHp
-        };
+            if (!WindowCaptureService.TryReadClientPixel(hwnd, x, y, out var r, out var g, out var b, out error))
+                return null;
+
+            var matched = ColorDistance(r, g, b, probe.R, probe.G, probe.B) <= probe.Tolerance;
+            return new PixelProbeReading
+            {
+                Id = probe.Id,
+                Matched = matched && probe.MinMatches <= 1,
+                MatchCount = matched ? 1 : 0,
+                SampleR = r,
+                SampleG = g,
+                SampleB = b
+            };
+        }
+
+        if (!WindowCaptureService.TryCaptureClientRegion(hwnd, x, y, w, h, out var bitmap, out error) ||
+            bitmap is null)
+            return null;
+
+        using (bitmap)
+        {
+            var matches = 0;
+            byte sampleR = 0, sampleG = 0, sampleB = 0;
+            var tol = Math.Max(0, probe.Tolerance);
+
+            for (var py = 0; py < bitmap.Height; py++)
+            {
+                for (var px = 0; px < bitmap.Width; px++)
+                {
+                    var c = bitmap.GetPixel(px, py);
+                    if (ColorDistance(c.R, c.G, c.B, probe.R, probe.G, probe.B) <= tol)
+                    {
+                        matches++;
+                        if (matches == 1)
+                        {
+                            sampleR = c.R;
+                            sampleG = c.G;
+                            sampleB = c.B;
+                        }
+                    }
+                }
+            }
+
+            var min = Math.Max(1, probe.MinMatches);
+            return new PixelProbeReading
+            {
+                Id = probe.Id,
+                Matched = matches >= min,
+                MatchCount = matches,
+                SampleR = sampleR,
+                SampleG = sampleG,
+                SampleB = sampleB
+            };
+        }
     }
 
     private static int ColorDistance(byte r1, byte g1, byte b1, byte r2, byte g2, byte b2)

@@ -24,11 +24,15 @@ public partial class MainWindow : Window
     private AttackLoop? _attackLoop;
     private IKeyInput? _keyInput;
     private MonitorWindow? _monitor;
+    private KeysWindow? _keysWindow;
     private nint _sampleHwnd;
     private bool _isRunning;
     private int? _selectedPid;
     private bool _isCapturing;
     private bool _suppressInputUiEvents;
+    private bool _playerBarsCalibrated;
+    private bool _targetBarCalibrated;
+    private string _calibrationHint = "калибровка…";
 
     public MainWindow()
     {
@@ -48,7 +52,14 @@ public partial class MainWindow : Window
     {
         _settings = SettingsStore.Load();
         _barProfile = StatusBarProfileStore.LoadOrCreateDefault();
-        EnsureBarProfileUpToDate();
+        StatusBarProfileStore.EnsureDeathSkullProbe(_barProfile);
+        _playerBarsCalibrated = HasBar(_barProfile, "cp") && HasBar(_barProfile, "hp") && HasBar(_barProfile, "mp");
+        _targetBarCalibrated = HasBar(_barProfile, "target_hp");
+        if (!_barProfile.AutoCalibrated)
+        {
+            _playerBarsCalibrated = false;
+            _targetBarCalibrated = false;
+        }
 
         _suppressInputUiEvents = true;
         TopmostCheck.IsChecked = _settings.AlwaysOnTop;
@@ -56,7 +67,7 @@ public partial class MainWindow : Window
         AutoAttackCheck.IsChecked = _settings.AutoAttackEnabled;
         _suppressInputUiEvents = false;
 
-        RebuildKeyInput();
+        RefreshTeensyPorts(selectPreferred: true);
         AttachHotkeys();
         RefreshProcesses(keepSelection: false);
     }
@@ -73,12 +84,37 @@ public partial class MainWindow : Window
             _monitor.Close();
             _monitor = null;
         }
+
+        if (_keysWindow is not null)
+        {
+            _keysWindow.AllowClose = true;
+            _keysWindow.Close();
+            _keysWindow = null;
+        }
     }
 
     private void TitleBar_OnMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        if (e.ChangedButton == MouseButton.Left)
-            DragMove();
+        if (e.ChangedButton != MouseButton.Left || e.ButtonState != MouseButtonState.Pressed)
+            return;
+        // Only title bar is wired — never steal focus from inputs.
+        if (e.OriginalSource is DependencyObject src &&
+            (FindVisualParent<Button>(src) is not null || FindVisualParent<CheckBox>(src) is not null))
+            return;
+        DragMove();
+    }
+
+    private static T? FindVisualParent<T>(DependencyObject child) where T : DependencyObject
+    {
+        var current = child;
+        while (current is not null)
+        {
+            if (current is T match)
+                return match;
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return null;
     }
 
     private void MinimizeButton_OnClick(object sender, RoutedEventArgs e) =>
@@ -120,16 +156,154 @@ public partial class MainWindow : Window
     private void RebuildKeyInput()
     {
         _keyInput?.Dispose();
-        _keyInput = new SendInputKeyInput();
+
+        _settings.InputBackend = "Teensy";
+        var port = TeensyPortCombo?.SelectedItem as string
+                   ?? _settings.TeensyComPort
+                   ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(port))
+            _settings.TeensyComPort = port;
+
+        _keyInput = new TeensyKeyInput(_settings.TeensyComPort);
+        UpdateTeensyStatusLabel();
+
+        _settings.KeyBinds ??= KeyBindProfile.CreateDefault();
+        _settings.KeyBinds.EnsureComplete();
         _attackLoop = new AttackLoop(_keyInput)
         {
             Enabled = AutoAttackCheck?.IsChecked == true,
-            IntervalMs = 1000,
-            TargetHwnd = _sampleHwnd
+            TargetHwnd = _sampleHwnd,
+            Binds = _settings.KeyBinds,
+            NextTargetAttempts = Math.Clamp(_settings.NextTargetAttempts, 0, 20),
+            ApproachNextTargetEnabled = _settings.ApproachNextTargetEnabled,
+            ApproachNextTargetIntervalMs = Math.Clamp(_settings.ApproachNextTargetIntervalMs, 300, 10000),
+            LootAttempts = Math.Clamp(_settings.LootAttempts, 1, 20),
+            LootIntervalMs = Math.Clamp(_settings.LootIntervalMs, 200, 10000)
         };
     }
 
+    private void RefreshTeensyButton_OnClick(object sender, RoutedEventArgs e) =>
+        RefreshTeensyPorts(selectPreferred: true);
+
+    private void TeensyPortCombo_OnSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_suppressInputUiEvents)
+            return;
+
+        if (TeensyPortCombo.SelectedItem is string port && !string.IsNullOrWhiteSpace(port))
+        {
+            _settings.TeensyComPort = port;
+            _settings.InputBackend = "Teensy";
+            SettingsStore.Save(_settings);
+            RebuildKeyInput();
+        }
+    }
+
+    private void RefreshTeensyPorts(bool selectPreferred)
+    {
+        _suppressInputUiEvents = true;
+        try
+        {
+            var ports = System.IO.Ports.SerialPort.GetPortNames()
+                .OrderBy(p => p, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            TeensyPortCombo.ItemsSource = ports;
+
+            // Prefer a port that actually answers PING→PONG (real Teensy).
+            var live = TeensyKeyInput.FindLivePort(ports);
+            string? selected = null;
+
+            if (live is not null)
+                selected = live;
+            else if (selectPreferred && !string.IsNullOrWhiteSpace(_settings.TeensyComPort))
+                selected = ports.FirstOrDefault(p =>
+                    string.Equals(p, _settings.TeensyComPort, StringComparison.OrdinalIgnoreCase));
+
+            selected ??= ports.FirstOrDefault(p =>
+                !string.Equals(p, "COM1", StringComparison.OrdinalIgnoreCase));
+            selected ??= ports.FirstOrDefault();
+
+            TeensyPortCombo.SelectedItem = selected;
+            if (!string.IsNullOrWhiteSpace(selected))
+                _settings.TeensyComPort = selected;
+        }
+        finally
+        {
+            _suppressInputUiEvents = false;
+        }
+
+        RebuildKeyInput();
+    }
+
+    private void UpdateTeensyStatusLabel()
+    {
+        if (TeensyStatusText is null)
+            return;
+
+        if (_keyInput is TeensyKeyInput teensy)
+        {
+            TeensyStatusText.Text = teensy.IsReady
+                ? $"Teensy готов · {teensy.Name} (PING OK)"
+                : $"Teensy не готов · {teensy.LastError ?? "прошейте Serial+Keyboard+Mouse"}";
+            TeensyStatusText.Foreground = teensy.IsReady ? SuccessBrush : DangerBrush;
+            return;
+        }
+
+        TeensyStatusText.Text = "Ожидание Teensy…";
+        TeensyStatusText.Foreground = MutedBrush;
+    }
+
     private void MonitorButton_OnClick(object sender, RoutedEventArgs e) => OpenMonitor();
+
+    private void KeysButton_OnClick(object sender, RoutedEventArgs e) => OpenKeys();
+
+    private void OpenKeys()
+    {
+        _settings.KeyBinds ??= KeyBindProfile.CreateDefault();
+        _settings.KeyBinds.EnsureComplete();
+
+        if (_keysWindow is not null)
+        {
+            _keysWindow.Saved -= OnKeyBindsSaved;
+            _keysWindow.AllowClose = true;
+            _keysWindow.Close();
+            _keysWindow = null;
+        }
+
+        _keysWindow = new KeysWindow(
+            _settings.KeyBinds,
+            _settings.NextTargetAttempts,
+            _settings.ApproachNextTargetEnabled,
+            _settings.ApproachNextTargetIntervalMs,
+            _settings.LootAttempts,
+            _settings.LootIntervalMs) { Owner = this };
+        _keysWindow.Saved += OnKeyBindsSaved;
+        _keysWindow.Show();
+        _keysWindow.Activate();
+    }
+
+    private void OnKeyBindsSaved(KeyBindSaveData data)
+    {
+        _settings.KeyBinds = data.Profile;
+        _settings.NextTargetAttempts = Math.Clamp(data.NextTargetAttempts, 0, 20);
+        _settings.ApproachNextTargetEnabled = data.ApproachNextTargetEnabled;
+        _settings.ApproachNextTargetIntervalMs = Math.Clamp(data.ApproachNextTargetIntervalMs, 300, 10000);
+        _settings.LootAttempts = Math.Clamp(data.LootAttempts, 1, 20);
+        _settings.LootIntervalMs = Math.Clamp(data.LootIntervalMs, 200, 10000);
+        if (_attackLoop is not null)
+        {
+            _attackLoop.Binds = data.Profile;
+            _attackLoop.NextTargetAttempts = _settings.NextTargetAttempts;
+            _attackLoop.ApproachNextTargetEnabled = _settings.ApproachNextTargetEnabled;
+            _attackLoop.ApproachNextTargetIntervalMs = _settings.ApproachNextTargetIntervalMs;
+            _attackLoop.LootAttempts = _settings.LootAttempts;
+            _attackLoop.LootIntervalMs = _settings.LootIntervalMs;
+            _attackLoop.Reset();
+        }
+
+        SettingsStore.Save(_settings);
+    }
 
     private void OpenMonitor()
     {
@@ -207,12 +381,29 @@ public partial class MainWindow : Window
 
         _sampleHwnd = live.MainWindowHandle;
         PersistUiSettings();
-        RebuildKeyInput();
+        RefreshTeensyPorts(selectPreferred: true);
+
+        if (_keyInput is not { IsReady: true })
+        {
+            SetStatus(
+                $"Teensy не готов: {_keyInput?.LastError ?? "выберите COM3 (не COM1)"}",
+                DangerBrush);
+            return;
+        }
+
         _attackLoop?.Reset();
+
+        // Always re-find bars on start — display settings may have shifted.
+        _playerBarsCalibrated = false;
+        _targetBarCalibrated = false;
+        _calibrationHint = "калибровка…";
+        _barProfile.AutoCalibrated = false;
+        _barProfile.Bars = [];
+
         SetRunning(true);
         StartSampling();
         SampleOnce();
-        SetStatus("Работает…", SuccessBrush);
+        SetStatus("Калибровка полосок…", MutedBrush);
     }
 
     private void StopBot()
@@ -271,8 +462,74 @@ public partial class MainWindow : Window
             }
         }
 
-        UpdateCombatAndBars();
+        if (!_playerBarsCalibrated || !_targetBarCalibrated)
+            TryAutoCalibrateBars();
+
+        if (_playerBarsCalibrated || _targetBarCalibrated)
+            UpdateCombatAndBars();
+        else
+            SetStatus($"Калибровка… {_calibrationHint}", MutedBrush);
+
         UpdatePixelProbe();
+    }
+
+    private void TryAutoCalibrateBars()
+    {
+        if (!StatusBarAutoCalibrator.TryCalibrate(_sampleHwnd, out var found, out var error))
+        {
+            if (!string.IsNullOrWhiteSpace(error))
+                SetStatus(error, DangerBrush);
+            else
+                _calibrationHint = found.Summary;
+
+            if (_monitor is { IsVisible: true })
+                _monitor.SetHint($"Калибровка: {_calibrationHint}");
+            return;
+        }
+
+        var changed = false;
+
+        if (!_playerBarsCalibrated && found.PlayerOk)
+        {
+            StatusBarAutoCalibrator.ApplyToProfile(_barProfile, new StatusBarAutoCalibrator.CalibrationResult
+            {
+                PlayerOk = true,
+                Cp = found.Cp,
+                Hp = found.Hp,
+                Mp = found.Mp
+            });
+            _playerBarsCalibrated = true;
+            changed = true;
+        }
+
+        if (!_targetBarCalibrated && found.TargetOk)
+        {
+            StatusBarAutoCalibrator.ApplyToProfile(_barProfile, new StatusBarAutoCalibrator.CalibrationResult
+            {
+                TargetOk = true,
+                TargetHp = found.TargetHp
+            });
+            _targetBarCalibrated = true;
+            changed = true;
+        }
+
+        _calibrationHint = found.Summary;
+
+        if (_playerBarsCalibrated && _targetBarCalibrated)
+            _barProfile.AutoCalibrated = true;
+
+        if (changed)
+            StatusBarProfileStore.Save(_barProfile);
+
+        if (_monitor is { IsVisible: true })
+        {
+            _monitor.SetHint(
+                _playerBarsCalibrated && _targetBarCalibrated
+                    ? $"Автокалибровка OK · {_calibrationHint}"
+                    : $"Калибровка: {_calibrationHint}" +
+                      (!_playerBarsCalibrated ? " · ждут CP/HP/MP" : "") +
+                      (!_targetBarCalibrated ? " · ждут TGT (возьми моба)" : ""));
+        }
     }
 
     private void UpdateCombatAndBars()
@@ -318,16 +575,50 @@ public partial class MainWindow : Window
             _monitor.SetCombat(combat);
             _monitor.SetHint(
                 $"Окно: {StatusBarReader.LastClientWidth}×{StatusBarReader.LastClientHeight} · " +
-                $"scale {StatusBarReader.LastScaleX:0.###}×{StatusBarReader.LastScaleY:0.###}");
+                $"авто · {_calibrationHint}");
         }
 
-        var attackInfo = _attackLoop is { Enabled: true }
-            ? $" · {_attackLoop.LastKeyLabel}×{_attackLoop.PressCount}/{_attackLoop.LastSkipReason}"
-            : "";
+        UpdateLiveStatus(combat, cp, hp, mp, tgt);
+    }
 
-        SetStatus(
-            $"{combat.Summary} · TGT {FormatTargetPercent(tgt)}{attackInfo}",
-            SuccessBrush);
+    private void UpdateLiveStatus(
+        CombatState combat,
+        StatusBarReading? cp,
+        StatusBarReading? hp,
+        StatusBarReading? mp,
+        StatusBarReading? tgt)
+    {
+        var situation = combat.TargetDead
+            ? "Цель: труп (череп)"
+            : combat.TargetAlive
+                ? $"Цель: есть · HP {FormatTargetPercent(tgt)}"
+                : "Цель: нет";
+
+        string actionLine;
+        string phaseLine;
+        if (_attackLoop is null || !_attackLoop.Enabled)
+        {
+            actionLine = "Автодействия выключены";
+            phaseLine = "Включите галочку «Автодействия»";
+        }
+        else
+        {
+            var actionName = BotActionInfo.DisplayName(_attackLoop.PlannedAction);
+            var namedCount = _settings.KeyBinds.FindAllKeys(BotAction.SearchMob).Count;
+            var cycle = namedCount > 0
+                ? $" · ник {_attackLoop.NamedIndex + 1}/{namedCount} · next {_attackLoop.NextTargetAttempt}/{_attackLoop.NextTargetAttempts}"
+                : "";
+            if (_attackLoop.IsLooting)
+                cycle += $" · лут {_attackLoop.LootAttempt}/{_attackLoop.LootAttempts}";
+            actionLine =
+                $"Сейчас: {actionName} · [{_attackLoop.LastKeyLabel}] · нажатий {_attackLoop.PressCount}{cycle}";
+            phaseLine = _attackLoop.Phase;
+        }
+
+        var barsLine =
+            $"Свои CP {FormatBarPercent(cp)} · HP {FormatBarPercent(hp)} · MP {FormatBarPercent(mp)}";
+
+        SetStatus(situation, actionLine, phaseLine, barsLine, SuccessBrush);
     }
 
     private void UpdatePixelProbe()
@@ -503,66 +794,14 @@ public partial class MainWindow : Window
 
         _settings.AlwaysOnTop = TopmostCheck.IsChecked == true;
         _settings.AutoAttackEnabled = AutoAttackCheck.IsChecked == true;
-        _settings.InputBackend = "SendInput";
+        _settings.InputBackend = "Teensy";
+        if (TeensyPortCombo?.SelectedItem is string port && !string.IsNullOrWhiteSpace(port))
+            _settings.TeensyComPort = port;
         SettingsStore.Save(_settings);
     }
 
-    private void EnsureBarProfileUpToDate()
-    {
-        var changed = false;
-        if (_barProfile.ReferenceWidth == 1920 && _barProfile.ReferenceHeight == 1080)
-        {
-            _barProfile.ReferenceWidth = 2560;
-            _barProfile.ReferenceHeight = 1440;
-            changed = true;
-        }
-
-        if (!_barProfile.Bars.Any(b => b.Id.Equals("target_hp", StringComparison.OrdinalIgnoreCase)))
-        {
-            _barProfile.Bars.Add(new StatusBarDefinition
-            {
-                Id = "target_hp", Name = "Target HP",
-                X1 = 1365, Y1 = 122, X2 = 1749, Y2 = 126,
-                R = 161, G = 57, B = 64, Tolerance = 42
-            });
-            changed = true;
-        }
-
-        _barProfile.Probes ??= [];
-        if (!_barProfile.Probes.Any(p => p.Id.Equals("target_selected", StringComparison.OrdinalIgnoreCase)))
-        {
-            _barProfile.Probes.Add(new PixelProbe
-            {
-                Id = "target_selected", Name = "Target selected",
-                X = 1665, Y = 28, R = 224, G = 211, B = 143, Tolerance = 35
-            });
-            changed = true;
-        }
-
-        if (!_barProfile.Probes.Any(p => p.Id.Equals("target_dead", StringComparison.OrdinalIgnoreCase)))
-        {
-            _barProfile.Probes.Add(new PixelProbe
-            {
-                Id = "target_dead", Name = "Target dead",
-                X = 1345, Y = 52, R = 132, G = 85, B = 90, Tolerance = 35
-            });
-            changed = true;
-        }
-
-        if (!changed)
-            return;
-
-        try
-        {
-            File.WriteAllText(
-                StatusBarProfileStore.DefaultPath,
-                System.Text.Json.JsonSerializer.Serialize(_barProfile, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
-        }
-        catch
-        {
-            // ignore
-        }
-    }
+    private static bool HasBar(StatusBarProfile profile, string id) =>
+        profile.Bars.Any(b => b.Id.Equals(id, StringComparison.OrdinalIgnoreCase) && (b.HasPercents || b.X2 > b.X1));
 
     private static string FormatBarPercent(StatusBarReading? reading)
     {
@@ -590,9 +829,15 @@ public partial class MainWindow : Window
         StatusDot.Fill = running ? SuccessBrush : MutedBrush;
     }
 
-    private void SetStatus(string message, Brush dotBrush)
+    private void SetStatus(string message, Brush dotBrush) =>
+        SetStatus(message, "", "", "", dotBrush);
+
+    private void SetStatus(string situation, string action, string phase, string bars, Brush dotBrush)
     {
-        StatusText.Text = message;
+        StatusSituationText.Text = situation;
+        StatusActionText.Text = action;
+        StatusPhaseText.Text = phase;
+        StatusBarsText.Text = bars;
         StatusDot.Fill = _isRunning ? SuccessBrush : dotBrush;
     }
 }

@@ -6,6 +6,14 @@
 captures/
 settings.json
 
+## Game screenshots / probe dumps (not app assets)
+_tmp*
+*_tmp*
+*.bmp
+*.BMP
+# keep program icons
+!Assets/
+
 ## Visual Studio / Rider / VS Code
 .vs/
 .idea/
